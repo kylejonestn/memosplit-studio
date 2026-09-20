@@ -2301,7 +2301,18 @@ if __name__ == "__main__":
       }
     }
 
-    function switchTab(tabId) {
+    function switchTab(tabId, pushHistory = true) {
+      if (pushHistory) {
+        try {
+          const currentHash = window.location.hash.replace(/^#/, '');
+          if (currentHash !== tabId) {
+            history.pushState({ tab: tabId, recordingId: currentRecordingId || null }, '', '#' + tabId);
+          }
+        } catch (e) {
+          console.warn("History pushState error:", e);
+        }
+      }
+
       const viewLibrary = document.getElementById('view-library');
       const viewPlayer = document.getElementById('view-player');
       const viewStudio = document.getElementById('view-studio');
@@ -2358,6 +2369,14 @@ if __name__ == "__main__":
       }
       lucide.createIcons();
     }
+
+    // Handle browser Back / Forward buttons
+    window.addEventListener('popstate', (event) => {
+      const targetTab = (event.state && event.state.tab) || (window.location.hash.replace(/^#/, '')) || 'library';
+      if (['library', 'player', 'studio', 'backend'].includes(targetTab)) {
+        switchTab(targetTab, false);
+      }
+    });
 
     // =========================================================================
     // Library Management (Plex-Style Folder Explorer & MyCloud Archive)
@@ -4781,6 +4800,17 @@ if __name__ == "__main__":
       renderSpeakerCards();
       renderTranscript();
       document.getElementById('time-total').innerText = formatTime(totalDuration);
+
+      // Initialize browser history state
+      const initialTab = (window.location.hash.replace(/^#/, '')) || 'library';
+      if (['library', 'player', 'studio', 'backend'].includes(initialTab)) {
+        history.replaceState({ tab: initialTab, recordingId: currentRecordingId || null }, '', '#' + initialTab);
+        if (initialTab !== 'library') {
+          switchTab(initialTab, false);
+        }
+      } else {
+        history.replaceState({ tab: 'library', recordingId: currentRecordingId || null }, '', '#library');
+      }
 
       // Auto-check local server silently
       testBackendConnection();
