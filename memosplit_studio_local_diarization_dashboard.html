@@ -2861,6 +2861,129 @@ if __name__ == "__main__":
       }
     }
 
+    function srtTimeToSeconds(str) {
+      if (!str) return 0;
+      const clean = str.trim().replace(',', '.');
+      const parts = clean.split(':');
+      if (parts.length === 3) {
+        return parseFloat(parts[0]) * 3600 + parseFloat(parts[1]) * 60 + parseFloat(parts[2]);
+      } else if (parts.length === 2) {
+        return parseFloat(parts[0]) * 60 + parseFloat(parts[1]);
+      } else if (parts.length === 1) {
+        return parseFloat(parts[0]) || 0;
+      }
+      return 0;
+    }
+
+    function parseSrtToSegments(content) {
+      if (!content || typeof content !== 'string') return [];
+      
+      // Remove UTF-8 BOM and normalize line breaks
+      const cleanContent = content.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
+      const blocks = cleanContent.split(/\n\s*\n/);
+      const segs = [];
+
+      // Regex matching Otter.ai, WhisperX, and standard SRT speaker tags:
+      // "[Speaker 1]: ...", "Speaker 1: ...", "Troy Jones: ...", "[Troy Jones]: ...", "SPEAKER 01: ..."
+      const speakerRegex = /^\[?(?:Speaker\s*([0-9A-Za-z_-]+)|([A-Za-z0-9\s._\'-]{1,50}))\]?\s*:\s*([\s\S]*)$/;
+
+      let currentSpeaker = "Speaker 1";
+      let hasSeenFirstSpeaker = false;
+
+      for (let i = 0; i < blocks.length; i++) {
+        const block = blocks[i].trim();
+        if (!block) continue;
+
+        const lines = block.split('\n').map(l => l.trim()).filter(Boolean);
+        if (lines.length === 0) continue;
+
+        // Find the line containing the timestamp arrow (-->)
+        let timeLineIdx = -1;
+        for (let j = 0; j < lines.length; j++) {
+          if (lines[j].includes('-->')) {
+            timeLineIdx = j;
+            break;
+          }
+        }
+        if (timeLineIdx === -1) continue;
+
+        const timeLine = lines[timeLineIdx];
+        const timeMatch = timeLine.match(/(\d{1,2}:\d{2}(?::\d{2})?(?:[,\.]\d{1,3})?)\s*-->\s*(\d{1,2}:\d{2}(?::\d{2})?(?:[,\.]\d{1,3})?)/);
+        if (!timeMatch) continue;
+
+        const startSec = srtTimeToSeconds(timeMatch[1]);
+        const endSec = srtTimeToSeconds(timeMatch[2]);
+
+        const textLines = lines.slice(timeLineIdx + 1);
+        const rawText = textLines.join(' ').trim();
+        if (!rawText) continue;
+
+        const spkMatch = rawText.match(speakerRegex);
+        let text = rawText;
+
+        if (spkMatch) {
+          const g1 = spkMatch[1];
+          const g2 = spkMatch[2];
+          const speakerName = (g1 || g2 || '').trim();
+          if (speakerName) {
+            if (/^\d+$/.test(speakerName)) {
+              currentSpeaker = `Speaker ${parseInt(speakerName, 10)}`;
+            } else if (/^speaker\s*\d+$/i.test(speakerName)) {
+              const num = speakerName.replace(/\D+/g, '');
+              currentSpeaker = `Speaker ${num ? parseInt(num, 10) : speakerName}`;
+            } else {
+              currentSpeaker = speakerName;
+            }
+            hasSeenFirstSpeaker = true;
+          }
+          text = (spkMatch[3] || '').trim();
+        } else {
+          // Continuation block retains the currently active speaker
+          text = rawText;
+        }
+
+        segs.push({
+          id: segs.length + 1,
+          start: Math.round(startSec * 100) / 100,
+          end: Math.round(endSec * 100) / 100,
+          speaker: currentSpeaker,
+          text: text
+        });
+      }
+
+      return segs;
+    }
+
+    function parseTxtToSegments(content) {
+      if (!content || typeof content !== 'string') return [];
+      const lines = content.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n').map(l => l.trim()).filter(Boolean);
+      if (lines.length === 0) return [];
+
+      const segs = [];
+      const tsPattern = /^(?:(?:(\w[\w\s]{0,25}?)\s*[:\-])\s*)?\[?(\d{1,2}:\d{2}(?::\d{2})?(?:[,\.]\d+)?)\]?(?:\s*-\s*\[?(\d{1,2}:\d{2}(?::\d{2})?(?:[,\.]\d+)?)\]?)?\s*:?\s*(.*)$/;
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const match = line.match(tsPattern);
+        if (match && (match[2] || match[1])) {
+          const spk = match[1] || 'Speaker 1';
+          const start = match[2] ? srtTimeToSeconds(match[2]) : i * 5;
+          const end = match[3] ? srtTimeToSeconds(match[3]) : start + 4.0;
+          const text = (match[4] || '').trim();
+          if (text) {
+            segs.push({
+              id: segs.length + 1,
+              start: Math.round(start * 100) / 100,
+              end: Math.round(end * 100) / 100,
+              speaker: spk,
+              text
+            });
+          }
+        }
+      }
+      return segs;
+    }
+
     async function scanLocalDirectory(dirHandle) {
       const audioExts = ['.m4a', '.mp3', '.wav', '.aac', '.ogg', '.flac'];
       const recordingsMap = new Map();
@@ -2876,8 +2999,9 @@ if __name__ == "__main__":
             const lastDot = lower.lastIndexOf('.');
             if (lastDot === -1) continue;
             const ext = lower.slice(lastDot);
-            const base = name.slice(0, lastDot);
-            const relKey = pathPrefix ? `${pathPrefix}/${base}` : base;
+            const base = name.slice(0, lastDot).trim();
+            const normBase = base.toLowerCase();
+            const relKey = pathPrefix ? `${pathPrefix.toLowerCase()}/${normBase}` : normBase;
 
             if (!recordingsMap.has(relKey)) {
               recordingsMap.set(relKey, {
@@ -2908,6 +3032,7 @@ if __name__ == "__main__":
               item.audioHandle = entry;
               item.filename = name;
               item.relative_path = pathPrefix ? `${pathPrefix}/${name}` : name;
+              item.dirHandle = handle;
               try {
                 const f = await entry.getFile();
                 item.size_bytes = f.size;
@@ -2929,19 +3054,46 @@ if __name__ == "__main__":
               item.srtHandle = entry;
               item.has_speakers = true;
               item.has_transcript = true;
+              try {
+                const f = await entry.getFile();
+                const srtText = await f.text();
+                const segs = parseSrtToSegments(srtText);
+                if (segs.length > 0) {
+                  item.duration = segs[segs.length - 1].end;
+                  item.speakers = [...new Set(segs.map(s => s.speaker))];
+                  item.preview_text = segs.slice(0, 3).map(s => s.text).join(' ');
+                }
+              } catch(e) {}
             } else if (ext === '.vtt') {
               item.vttHandle = entry;
+              item.has_speakers = true;
+              item.has_transcript = true;
+              try {
+                const f = await entry.getFile();
+                const vttText = await f.text();
+                const segs = parseSrtToSegments(vttText);
+                if (segs.length > 0) {
+                  item.duration = segs[segs.length - 1].end;
+                  item.speakers = [...new Set(segs.map(s => s.speaker))];
+                  item.preview_text = segs.slice(0, 3).map(s => s.text).join(' ');
+                }
+              } catch(e) {}
             } else if (ext === '.txt') {
               item.txtHandle = entry;
               item.has_transcript = true;
-              if (!item.has_speakers) {
-                item.has_raw_transcript = true;
-                try {
-                  const f = await entry.getFile();
-                  const txt = await f.text();
-                  item.preview_text = txt.slice(0, 150);
-                } catch(e) {}
-              }
+              try {
+                const f = await entry.getFile();
+                const txt = await f.text();
+                item.preview_text = txt.slice(0, 150);
+                const txtSegs = parseTxtToSegments(txt);
+                if (txtSegs.length > 0) {
+                  item.has_speakers = true;
+                  item.duration = txtSegs[txtSegs.length - 1].end;
+                  item.speakers = [...new Set(txtSegs.map(s => s.speaker))];
+                } else {
+                  item.has_raw_transcript = true;
+                }
+              } catch(e) {}
             }
           } else if (entry.kind === 'directory') {
             const subPath = pathPrefix ? `${pathPrefix}/${entry.name}` : entry.name;
@@ -2955,7 +3107,39 @@ if __name__ == "__main__":
 
       await walk(dirHandle);
 
-      const list = Array.from(recordingsMap.values()).filter(r => r.audioHandle || r.jsonHandle || r.srtHandle || r.txtHandle);
+      // Pass 2: Loose companion matching for audio files without transcripts
+      const allItems = Array.from(recordingsMap.values());
+      const audioItems = allItems.filter(r => r.audioHandle);
+      const transcriptOnlyItems = allItems.filter(r => !r.audioHandle && (r.jsonHandle || r.srtHandle || r.vttHandle || r.txtHandle));
+
+      audioItems.forEach(audioItem => {
+        if (!audioItem.has_transcript) {
+          const audioBase = audioItem.baseName.toLowerCase().replace(/[^a-z0-9]/g, '');
+          const folderPrefix = audioItem.relative_folder ? audioItem.relative_folder.toLowerCase() : '';
+
+          const match = transcriptOnlyItems.find(tItem => {
+            const tFolder = tItem.relative_folder ? tItem.relative_folder.toLowerCase() : '';
+            if (tFolder !== folderPrefix && !tFolder.startsWith(folderPrefix)) return false;
+            const tBase = tItem.baseName.toLowerCase().replace(/[^a-z0-9]/g, '');
+            return tBase.includes(audioBase) || audioBase.includes(tBase);
+          });
+
+          if (match) {
+            audioItem.jsonHandle = audioItem.jsonHandle || match.jsonHandle;
+            audioItem.srtHandle = audioItem.srtHandle || match.srtHandle;
+            audioItem.vttHandle = audioItem.vttHandle || match.vttHandle;
+            audioItem.txtHandle = audioItem.txtHandle || match.txtHandle;
+            audioItem.has_speakers = match.has_speakers;
+            audioItem.has_raw_transcript = match.has_raw_transcript;
+            audioItem.has_transcript = true;
+            audioItem.speakers = match.speakers.length > 0 ? match.speakers : audioItem.speakers;
+            audioItem.preview_text = match.preview_text || audioItem.preview_text;
+            if (match.duration > 0 && !audioItem.duration) audioItem.duration = match.duration;
+          }
+        }
+      });
+
+      const list = Array.from(recordingsMap.values()).filter(r => r.audioHandle || (!audioItems.length && (r.jsonHandle || r.srtHandle || r.txtHandle)));
 
       list.forEach(r => {
         const fKey = r.relative_folder || '';
@@ -3045,6 +3229,13 @@ if __name__ == "__main__":
             if (transcriptSegments.length > 0) {
               totalDuration = transcriptSegments[transcriptSegments.length - 1].end;
             }
+          } else if (recObj.vttHandle) {
+            const vf = await recObj.vttHandle.getFile();
+            const vttText = await vf.text();
+            transcriptSegments = parseSrtToSegments(vttText);
+            if (transcriptSegments.length > 0) {
+              totalDuration = transcriptSegments[transcriptSegments.length - 1].end;
+            }
           }
 
           if (recObj.txtHandle) {
@@ -3054,6 +3245,13 @@ if __name__ == "__main__":
             if (pasteArea) {
               pasteArea.value = txt;
               updatePastedTextStats();
+            }
+            if (!transcriptSegments || transcriptSegments.length === 0) {
+              const txtSegs = parseTxtToSegments(txt);
+              if (txtSegs.length > 0) {
+                transcriptSegments = txtSegs;
+                totalDuration = txtSegs[txtSegs.length - 1].end;
+              }
             }
           }
         } catch (e) {
@@ -3121,37 +3319,6 @@ if __name__ == "__main__":
       renderDiarizationStrip();
       renderSpeakerCards();
       renderTranscript();
-    }
-
-    function parseSrtToSegments(srtText) {
-      const blocks = srtText.trim().split(/\n\s*\n/);
-      const segs = [];
-      blocks.forEach((blk, idx) => {
-        const lines = blk.trim().split('\n');
-        if (lines.length >= 2) {
-          const timeMatch = lines[1].match(/(\d{2}:\d{2}:\d{2}[,\.]\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2}[,\.]\d{3})/);
-          if (timeMatch) {
-            const start = srtTimeToSeconds(timeMatch[1]);
-            const end = srtTimeToSeconds(timeMatch[2]);
-            const textLine = lines.slice(2).join(' ');
-            let speaker = "SPEAKER_00";
-            let text = textLine;
-            const spkMatch = textLine.match(/^\[(.*?)\]:\s*(.*)$/);
-            if (spkMatch) {
-              speaker = spkMatch[1];
-              text = spkMatch[2];
-            }
-            segs.push({ id: idx + 1, start, end, speaker, text });
-          }
-        }
-      });
-      return segs;
-    }
-
-    function srtTimeToSeconds(str) {
-      const [hms, ms] = str.replace(',', '.').split('.');
-      const [h, m, s] = hms.split(':').map(Number);
-      return h * 3600 + m * 60 + s + (parseFloat('0.' + ms) || 0);
     }
 
     // =========================================================================
