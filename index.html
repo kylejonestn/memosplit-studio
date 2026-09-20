@@ -3,7 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>MemoSplit Studio - Local Voice Memo Diarization & Transcriber</title>
+  <title>MemoSplit Studio - Voice Memo Diarization &amp; Transcriber</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236366f1' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M2 10v3'/><path d='M6 6v11'/><path d='M10 3v18'/><path d='M14 8v7'/><path d='M18 5v13'/><path d='M22 10v3'/></svg>">
   <!-- Tailwind CSS CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
@@ -2250,14 +2251,33 @@ if __name__ == "__main__":
     }
 
     let backendPort = 8080;
+    const isHttpsHosted = window.location.protocol === 'https:' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1';
 
     async function testBackendConnection() {
       const statusPill = document.getElementById('backend-status-pill');
       const indicator = document.getElementById('status-indicator');
       const statusText = document.getElementById('status-text');
 
-      statusText.innerText = "Checking Engine...";
-      indicator.className = "w-2.5 h-2.5 rounded-full bg-blue-400 animate-ping";
+      loadSettings();
+
+      if (isHttpsHosted) {
+        localServerOnline = false;
+        if (indicator) {
+          indicator.className = isLocalFolderMode ? "w-2.5 h-2.5 rounded-full bg-emerald-400" : "w-2.5 h-2.5 rounded-full bg-indigo-400";
+        }
+        if (statusText) {
+          statusText.innerText = (isLocalFolderMode && rootDirectoryHandle) ? `Folder: ${rootDirectoryHandle.name}` : "Browser Native Mode";
+        }
+        if (isLocalFolderMode && rootDirectoryHandle) {
+          scanLocalDirectory(rootDirectoryHandle);
+        } else {
+          renderLibraryFallback();
+        }
+        return;
+      }
+
+      if (statusText) statusText.innerText = "Checking Engine...";
+      if (indicator) indicator.className = "w-2.5 h-2.5 rounded-full bg-blue-400 animate-ping";
 
       const targetPort = window.location.port ? parseInt(window.location.port) : 8080;
       try {
@@ -2266,18 +2286,19 @@ if __name__ == "__main__":
           const data = await res.json();
           localServerOnline = true;
           backendPort = targetPort;
-          indicator.className = "w-2.5 h-2.5 rounded-full bg-emerald-400";
-          statusText.innerText = `Engine Live (${data.device || 'CPU'}) :${targetPort}`;
-          loadSettings();
+          if (indicator) indicator.className = "w-2.5 h-2.5 rounded-full bg-emerald-400";
+          if (statusText) statusText.innerText = `Engine Live (${data.device || 'CPU'}) :${targetPort}`;
           fetchLibrary();
           return;
         }
       } catch (err) {}
 
       localServerOnline = false;
-      indicator.className = "w-2.5 h-2.5 rounded-full bg-amber-400";
-      statusText.innerText = "Offline / Demo Mode";
-      showToast("No server found on :8080. Operating in client-side mode.");
+      if (indicator) indicator.className = "w-2.5 h-2.5 rounded-full bg-amber-400";
+      if (statusText) statusText.innerText = "Offline / Browser Mode";
+      if (!isLocalFolderMode) {
+        renderLibraryFallback();
+      }
     }
 
     function switchTab(tabId) {
@@ -2343,37 +2364,20 @@ if __name__ == "__main__":
     // =========================================================================
 
     function browseFolderPicker() {
-      const input = document.getElementById('folder-picker-input');
-      if (input) {
-        input.value = '';
-        input.click();
-      }
-    }
-
-    function handleFolderPickerSelected(event) {
-      const files = event.target.files;
-      if (!files || files.length === 0) return;
-
-      // Extract the top-level directory name
-      const sampleFile = files[0];
-      const relPath = sampleFile.webkitRelativePath || '';
-      const topDir = relPath ? relPath.split('/')[0] : '';
-
-      // Check if this matches a known mounted volume or local directory
-      const pathInput = document.getElementById('library-path-input');
-      if (pathInput) {
-        // If the user selected their mounted volume or voice clips folder
-        if (topDir.toLowerCase().includes('voice clip') || topDir.toLowerCase() === 'kyle' || topDir.toLowerCase() === 'public') {
-          pathInput.value = '/Volumes/Public/Kyle/voice clips';
-        } else {
-          pathInput.value = `./${topDir}`;
-        }
-        showToast(`Selected folder: ${pathInput.value}`);
-        fetchLibrary();
-      }
+      openLocalFolderPicker();
     }
 
     async function fetchLibrary() {
+      if (isLocalFolderMode && rootDirectoryHandle) {
+        await scanLocalDirectory(rootDirectoryHandle);
+        return;
+      }
+
+      if (isHttpsHosted) {
+        renderLibraryFallback();
+        return;
+      }
+
       const pathInput = document.getElementById('library-path-input');
       let path = pathInput ? pathInput.value.trim() : '';
 
@@ -2753,6 +2757,33 @@ if __name__ == "__main__":
     function renderLibraryFallback() {
       const container = document.getElementById('library-recordings-container');
       if (!container) return;
+
+      if (isHttpsHosted) {
+        container.innerHTML = `
+          <div class="col-span-full py-12 flex flex-col items-center justify-center text-center gap-4 bg-slate-900/80 border border-slate-800 rounded-2xl p-8 max-w-xl mx-auto shadow-xl">
+            <div class="w-14 h-14 rounded-2xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center border border-emerald-500/30 shadow-lg shadow-emerald-500/10">
+              <i data-lucide="folder-open" class="w-7 h-7"></i>
+            </div>
+            <div class="space-y-1.5">
+              <h3 class="text-base font-bold text-white">Connect Your Local Voice Memos Folder</h3>
+              <p class="text-xs text-slate-400 max-w-md leading-relaxed">
+                Connect your local voice memo folder (Mac drive or MyCloud NAS) to browse, transcribe with Gemini AI, and edit transcripts.
+              </p>
+              <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] font-mono mt-1">
+                <i data-lucide="shield-check" class="w-3.5 h-3.5"></i>
+                <span>100% Private • Direct Disk Access • Zero Server Upload</span>
+              </div>
+            </div>
+            <button onclick="openLocalFolderPicker()" class="mt-2 px-6 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl text-xs font-semibold flex items-center gap-2 shadow-lg shadow-emerald-600/30 transition active:scale-95">
+              <i data-lucide="folder-open" class="w-4 h-4"></i>
+              <span>Connect Local Folder</span>
+            </button>
+          </div>
+        `;
+        lucide.createIcons();
+        return;
+      }
+
       container.innerHTML = `
         <div class="col-span-full py-12 flex flex-col items-center justify-center text-center gap-3 bg-slate-900 border border-slate-800 rounded-2xl p-6">
           <div class="w-12 h-12 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center">
@@ -2760,12 +2791,18 @@ if __name__ == "__main__":
           </div>
           <div>
             <h3 class="text-sm font-bold text-white">Local Server Offline</h3>
-            <p class="text-xs text-slate-400 mt-1 max-w-md">Start the Python engine in Antigravity terminal with <code class="font-mono text-indigo-400">source venv/bin/activate &amp;&amp; python diarize_service.py</code> to browse your MyCloud library.</p>
+            <p class="text-xs text-slate-400 mt-1 max-w-md">Start the Python engine in terminal with <code class="font-mono text-indigo-400">source venv/bin/activate &amp;&amp; python diarize_service.py</code> or connect a local folder directly in your browser.</p>
           </div>
-          <button onclick="testBackendConnection(); fetchLibrary();" class="mt-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-medium flex items-center gap-2">
-            <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
-            <span>Retry Connection</span>
-          </button>
+          <div class="flex items-center gap-2 mt-2">
+            <button onclick="openLocalFolderPicker()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-medium flex items-center gap-2 shadow-md shadow-emerald-600/20">
+              <i data-lucide="folder-open" class="w-3.5 h-3.5"></i>
+              <span>Connect Local Folder</span>
+            </button>
+            <button onclick="testBackendConnection(); fetchLibrary();" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-medium flex items-center gap-2 border border-slate-700">
+              <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
+              <span>Retry Server</span>
+            </button>
+          </div>
         </div>
       `;
       lucide.createIcons();
@@ -2949,14 +2986,16 @@ if __name__ == "__main__":
       clearStudioPastedText();
 
       // 1. Audio Source
-      if (isLocalFolderMode && recObj && recObj.audioHandle) {
+      if (recObj && recObj.audioHandle) {
         try {
           const audioFile = await recObj.audioHandle.getFile();
           audioEl.src = URL.createObjectURL(audioFile);
         } catch (e) {
           console.error("Error reading audio file handle:", e);
         }
-      } else {
+      } else if (isHttpsHosted) {
+        showToast("Please click 'Open Folder' to connect your local audio folder.");
+      } else if (localServerOnline) {
         const query = currentLibraryPath ? `?path=${encodeURIComponent(currentLibraryPath)}` : '';
         audioEl.src = `http://localhost:${backendPort}/api/recordings/${filename.split('/').map(encodeURIComponent).join('/')}/audio${query}`;
       }
