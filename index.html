@@ -81,9 +81,9 @@
       <div>
         <div class="flex items-center gap-2">
           <h1 class="font-bold text-base tracking-tight text-white">MemoSplit Studio</h1>
-          <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold tracking-wide bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">LOCAL AI</span>
+          <button id="header-engine-mode-badge" onclick="toggleGeminiSettingsModal()" class="px-2 py-0.5 rounded-full text-[10px] font-semibold tracking-wide bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center gap-1 transition-all hover:bg-amber-500/30 cursor-pointer" title="Click to switch AI Engine (Gemini Cloud vs Local CPU)"><i data-lucide="zap" class="w-3 h-3 text-amber-400"></i><span>GEMINI CLOUD</span></button>
         </div>
-        <p class="text-xs text-slate-400">Offline WhisperX & Pyannote Speaker Diarization</p>
+        <p id="header-engine-mode-subtitle" class="text-xs text-slate-400">Google Gemini Multimodal Audio &amp; Speaker Diarization</p>
       </div>
     </div>
 
@@ -4316,6 +4316,8 @@ if __name__ == "__main__":
         if (btnGemini) btnGemini.className = "p-3 rounded-xl border border-slate-800 bg-slate-950/60 text-left transition flex flex-col gap-1 hover:border-slate-700";
         if (btnLocal) btnLocal.className = "p-3 rounded-xl border border-indigo-500/50 bg-indigo-500/10 text-left transition flex flex-col gap-1";
       }
+
+      // Update Settings Dropdown badge
       const badge = document.getElementById('header-gemini-badge');
       if (badge) {
         badge.innerText = eng === 'gemini' ? "Active" : "Local Only";
@@ -4323,6 +4325,35 @@ if __name__ == "__main__":
           ? "text-[9px] font-mono px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30"
           : "text-[9px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700";
       }
+
+      // Update Main Header Brand Badge & Subtitle
+      const headerEngineBadge = document.getElementById('header-engine-mode-badge');
+      const headerEngineSub = document.getElementById('header-engine-mode-subtitle');
+      if (headerEngineBadge) {
+        if (eng === 'gemini') {
+          headerEngineBadge.innerHTML = `<i data-lucide="zap" class="w-3 h-3 text-amber-400"></i><span>GEMINI CLOUD</span>`;
+          headerEngineBadge.className = "px-2 py-0.5 rounded-full text-[10px] font-semibold tracking-wide bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center gap-1 transition-all hover:bg-amber-500/30 cursor-pointer";
+        } else {
+          headerEngineBadge.innerHTML = `<i data-lucide="cpu" class="w-3 h-3 text-indigo-400"></i><span>LOCAL AI</span>`;
+          headerEngineBadge.className = "px-2 py-0.5 rounded-full text-[10px] font-semibold tracking-wide bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 flex items-center gap-1 transition-all hover:bg-indigo-500/30 cursor-pointer";
+        }
+      }
+      if (headerEngineSub) {
+        headerEngineSub.innerText = eng === 'gemini' 
+          ? "Google Gemini Multimodal Audio & Speaker Diarization"
+          : "Offline WhisperX & Pyannote Speaker Diarization";
+      }
+
+      // Update Ingest Card Engine Badge
+      const ingestBadge = document.getElementById('ingest-engine-badge');
+      if (ingestBadge) {
+        ingestBadge.innerText = eng === 'gemini' ? "⚡ Gemini Cloud" : "💻 Local CPU";
+        ingestBadge.className = eng === 'gemini'
+          ? "text-[10px] font-mono px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold"
+          : "text-[10px] font-mono px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-semibold";
+      }
+
+      lucide.createIcons();
     }
 
     function selectBatchEngine(eng) {
