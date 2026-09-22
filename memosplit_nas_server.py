@@ -170,7 +170,8 @@ class MemoSplitHandler(BaseHTTPRequestHandler):
             return
 
         if path in ("/api/recordings", "/api/library"):
-            scan_path = query.get("path", [MEDIA_ROOT])[0]
+            raw_path = query.get("path", [""])[0].strip()
+            scan_path = raw_path if raw_path else MEDIA_ROOT
             if not os.path.isabs(scan_path):
                 scan_path = os.path.join(MEDIA_ROOT, scan_path)
             self.handle_api_recordings(scan_path)
@@ -180,7 +181,8 @@ class MemoSplitHandler(BaseHTTPRequestHandler):
         audio_match = re.match(r"^/api/recordings/(.+)/audio$", path)
         if audio_match:
             rel_file = audio_match.group(1)
-            custom_root = query.get("path", [MEDIA_ROOT])[0]
+            raw_root = query.get("path", [""])[0].strip()
+            custom_root = raw_root if raw_root else MEDIA_ROOT
             full_path = os.path.join(custom_root, rel_file)
             self.handle_stream_audio(full_path)
             return
@@ -189,7 +191,8 @@ class MemoSplitHandler(BaseHTTPRequestHandler):
         transcript_match = re.match(r"^/api/recordings/(.+)/transcript$", path)
         if transcript_match:
             rel_file = transcript_match.group(1)
-            custom_root = query.get("path", [MEDIA_ROOT])[0]
+            raw_root = query.get("path", [""])[0].strip()
+            custom_root = raw_root if raw_root else MEDIA_ROOT
             full_path = os.path.join(custom_root, rel_file)
             self.handle_get_transcript(full_path)
             return
@@ -206,7 +209,8 @@ class MemoSplitHandler(BaseHTTPRequestHandler):
         transcript_match = re.match(r"^/api/recordings/(.+)/transcript$", path)
         if transcript_match:
             rel_file = transcript_match.group(1)
-            custom_root = query.get("path", [MEDIA_ROOT])[0]
+            raw_root = query.get("path", [""])[0].strip()
+            custom_root = raw_root if raw_root else MEDIA_ROOT
             full_path = os.path.join(custom_root, rel_file)
             self.handle_save_transcript(full_path)
             return
