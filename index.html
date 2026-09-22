@@ -1962,7 +1962,7 @@ if __name__ == "__main__":
           const formData = new FormData();
           formData.append('file', file);
           formData.append('hf_token', HF_TOKEN);
-          const response = await fetch(`http://localhost:${backendPort}/process`, {
+          const response = await fetch(`${getApiBaseUrl()}/process`, {
             method: 'POST',
             body: formData
           });
@@ -3563,10 +3563,25 @@ if __name__ == "__main__":
         if (elapsedEl) elapsedEl.innerText = formatTime(elapsedSec);
       }, 1000);
 
-      // Branch 1: Browser Native File System + In-Browser Gemini API (Zero-Backend Mode)
-      if (isLocalFolderMode && isGemini && recObj && recObj.audioHandle) {
+      // Branch 1: Gemini Cloud Diarization (Runs In-Browser for Local Folders & Network/NAS Servers)
+      if (isGemini) {
         try {
-          const audioFile = await recObj.audioHandle.getFile();
+          let audioFile = null;
+          if (isLocalFolderMode && recObj && recObj.audioHandle) {
+            audioFile = await recObj.audioHandle.getFile();
+          } else {
+            // Server / NAS Mode: fetch audio stream as Blob
+            percentEl.innerText = "15%";
+            barEl.style.width = "15%";
+            statusEl.innerText = "Fetching audio file from server...";
+            const audioUrl = `${getApiBaseUrl()}/api/recordings/${encodeURIComponent(currentRecordingId)}/audio${currentLibraryPath ? '?path=' + encodeURIComponent(currentLibraryPath) : ''}`;
+            const audioRes = await fetch(audioUrl);
+            if (!audioRes.ok) throw new Error(`Failed to load audio from server (HTTP ${audioRes.status})`);
+            const audioBlob = await audioRes.blob();
+            const fileName = currentRecordingId.split('/').pop() || 'audio.m4a';
+            audioFile = new File([audioBlob], fileName, { type: audioBlob.type || 'audio/mp4' });
+          }
+
           const result = await diarizeAudioWithGeminiInBrowser(audioFile, draftTranscriptText, (prog) => {
             if (prog.percent) {
               percentEl.innerText = `${prog.percent}%`;
@@ -3590,21 +3605,39 @@ if __name__ == "__main__":
               }
             });
 
-            // Write files directly to local disk
             setPhases(4);
-            statusEl.innerText = "Writing .srt, .vtt, .json, .txt directly to local folder...";
-            await saveDiarizationFilesToLocalFolder(recObj.dirHandle, recObj.baseName, transcriptSegments, totalDuration);
+            statusEl.innerText = isLocalFolderMode
+              ? "Writing .srt, .vtt, .json, .txt directly to local folder..."
+              : "Saving transcript and speaker turns to server...";
 
-            recObj.has_speakers = true;
-            recObj.has_transcript = true;
-            recObj.duration = totalDuration;
-            recObj.speakers = [...new Set(transcriptSegments.map(s => s.speaker))];
+            if (isLocalFolderMode && recObj && recObj.dirHandle) {
+              await saveDiarizationFilesToLocalFolder(recObj.dirHandle, recObj.baseName, transcriptSegments, totalDuration);
+            } else {
+              // Server / NAS Mode
+              const saveUrl = `${getApiBaseUrl()}/api/recordings/${encodeURIComponent(currentRecordingId)}/transcript${currentLibraryPath ? '?path=' + encodeURIComponent(currentLibraryPath) : ''}`;
+              await fetch(saveUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  segments: transcriptSegments,
+                  speaker_metadata: SPEAKER_METADATA,
+                  duration: totalDuration
+                })
+              });
+            }
+
+            if (recObj) {
+              recObj.has_speakers = true;
+              recObj.has_transcript = true;
+              recObj.duration = totalDuration;
+              recObj.speakers = [...new Set(transcriptSegments.map(s => s.speaker))];
+            }
 
             if (singleDiarizeTicker) clearInterval(singleDiarizeTicker);
             setPhases(5);
             percentEl.innerText = "100%";
             barEl.style.width = "100%";
-            statusEl.innerText = "⚡ Gemini Cloud Diarization complete! Saved to local folder";
+            statusEl.innerText = "⚡ Gemini Cloud Diarization complete! Saved.";
             if (etaEl) etaEl.innerText = "Done!";
 
             setTimeout(() => {
@@ -3614,8 +3647,12 @@ if __name__ == "__main__":
               renderDiarizationStrip();
               renderSpeakerCards();
               renderTranscript();
-              renderLibraryExplorer();
-              showToast(`⚡ Gemini Cloud Diarization completed in ~${elapsedSec}s and saved to local folder!`);
+              if (isLocalFolderMode) {
+                renderLibraryExplorer();
+              } else {
+                fetchLibrarySilently();
+              }
+              showToast(`⚡ Gemini Cloud Diarization completed in ~${elapsedSec}s and saved!`);
             }, 800);
             return;
           }
@@ -3628,14 +3665,14 @@ if __name__ == "__main__":
         }
       }
 
-      // Branch 2: Server Backend API
+      // Branch 2: Server Backend API (Local WhisperX / Pyannote Python Pipeline)
       const queryParams = new URLSearchParams();
       if (currentLibraryPath) queryParams.set('path', currentLibraryPath);
       queryParams.set('engine', currentEngine);
       if (draftTranscriptText) queryParams.set('draft_text', draftTranscriptText);
 
       try {
-        const postRes = await fetch(`http://localhost:${backendPort}/api/recordings/${currentRecordingId.split('/').map(encodeURIComponent).join('/')}/diarize?${queryParams.toString()}`, {
+        const postRes = await fetch(`${getApiBaseUrl()}/api/recordings/${encodeURIComponent(currentRecordingId)}/diarize?${queryParams.toString()}`, {
           method: 'POST'
         });
 
@@ -3650,7 +3687,7 @@ if __name__ == "__main__":
 
           const pollInterval = setInterval(async () => {
             try {
-              const statusRes = await fetch(`http://localhost:${backendPort}/api/job/status`);
+              const statusRes = await fetch(`${getApiBaseUrl()}/api/job/status`);
               if (!statusRes.ok) return;
               const statusJson = await statusRes.json();
               if (statusJson.type !== 'single') return;
@@ -3742,11 +3779,13 @@ if __name__ == "__main__":
 
       const models = [
         getGeminiModel(),
-        'gemini-flash-lite-latest',
-        'gemini-3.5-flash-lite',
-        'gemini-3.6-flash',
+        'gemini-2.5-flash',
+        'gemini-2.5-flash-lite',
+        'gemini-2.0-flash',
+        'gemini-2.0-flash-lite',
+        'gemini-1.5-flash',
         'gemini-flash-latest'
-      ].filter((v, i, a) => a.indexOf(v) === i);
+      ].filter((v, i, a) => v && a.indexOf(v) === i);
 
       onProgress({ stage: 'uploading', percent: 15, stage_detail: 'Preparing audio for Google Gemini Cloud...' });
 
@@ -3758,23 +3797,27 @@ if __name__ == "__main__":
       }
 
       let parts = [];
+      const lowerName = (audioFile.name || "").toLowerCase();
+      let mime = audioFile.type || "audio/mp4";
+      if (lowerName.endsWith('.m4a')) mime = "audio/mp4";
+      else if (lowerName.endsWith('.mp3')) mime = "audio/mp3";
+      else if (lowerName.endsWith('.wav')) mime = "audio/wav";
+      else if (lowerName.endsWith('.aac')) mime = "audio/aac";
+      else if (lowerName.endsWith('.ogg')) mime = "audio/ogg";
+      else if (lowerName.endsWith('.flac')) mime = "audio/flac";
 
-      if (audioFile.size < 20 * 1024 * 1024) {
-        onProgress({ stage: 'uploading', percent: 25, stage_detail: 'Encoding audio base64 payload...' });
-        const arrayBuf = await audioFile.arrayBuffer();
-        let binary = '';
-        const bytes = new Uint8Array(arrayBuf);
-        const len = bytes.byteLength;
-        const chunkSize = 8192;
-        for (let i = 0; i < len; i += chunkSize) {
-          binary += String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + chunkSize, len)));
-        }
-        const base64Audio = btoa(binary);
-
-        let mime = audioFile.type || "audio/mp4";
-        if (audioFile.name.endsWith('.m4a')) mime = "audio/mp4";
-        else if (audioFile.name.endsWith('.mp3')) mime = "audio/mp3";
-        else if (audioFile.name.endsWith('.wav')) mime = "audio/wav";
+      if (audioFile.size < 25 * 1024 * 1024) {
+        onProgress({ stage: 'uploading', percent: 25, stage_detail: 'Encoding audio payload...' });
+        const base64Audio = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => {
+            const res = reader.result;
+            const b64 = typeof res === 'string' ? res.substring(res.indexOf(',') + 1) : '';
+            resolve(b64);
+          };
+          reader.onerror = () => reject(new Error("Failed reading audio file into base64"));
+          reader.readAsDataURL(audioFile);
+        });
 
         parts = [
           { inlineData: { mimeType: mime, data: base64Audio } },
@@ -3782,10 +3825,6 @@ if __name__ == "__main__":
         ];
       } else {
         onProgress({ stage: 'uploading', percent: 20, stage_detail: 'Initiating large file upload to Google AI Studio Files API...' });
-        let mime = audioFile.type || "audio/mp4";
-        if (audioFile.name.endsWith('.m4a')) mime = "audio/mp4";
-        else if (audioFile.name.endsWith('.mp3')) mime = "audio/mp3";
-        else if (audioFile.name.endsWith('.wav')) mime = "audio/wav";
 
         const initRes = await fetch(`https://generativelanguage.googleapis.com/upload/v1beta/files?key=${apiKey}`, {
           method: 'POST',
@@ -3875,10 +3914,16 @@ if __name__ == "__main__":
           const rawText = genData.candidates?.[0]?.content?.parts?.[0]?.text || '';
           
           let cleaned = rawText.trim();
-          if (cleaned.startsWith('```json')) cleaned = cleaned.slice(7);
-          if (cleaned.startsWith('```')) cleaned = cleaned.slice(3);
-          if (cleaned.endsWith('```')) cleaned = cleaned.slice(0, -3);
-          cleaned = cleaned.trim();
+          const firstBracket = cleaned.indexOf('[');
+          const lastBracket = cleaned.lastIndexOf(']');
+          if (firstBracket !== -1 && lastBracket !== -1 && lastBracket > firstBracket) {
+            cleaned = cleaned.substring(firstBracket, lastBracket + 1);
+          } else {
+            if (cleaned.startsWith('```json')) cleaned = cleaned.slice(7);
+            if (cleaned.startsWith('```')) cleaned = cleaned.slice(3);
+            if (cleaned.endsWith('```')) cleaned = cleaned.slice(0, -3);
+            cleaned = cleaned.trim();
+          }
 
           const parsed = JSON.parse(cleaned);
           const segmentsList = Array.isArray(parsed) ? parsed : (parsed.segments || []);
@@ -4052,7 +4097,7 @@ if __name__ == "__main__":
       showToast(`Launching ${selectedBatchEngine === 'gemini' ? 'Gemini Cloud' : 'Local'} Batch Queue...`);
 
       try {
-        const res = await fetch(`http://localhost:${backendPort}/api/batch/start`, {
+        const res = await fetch(`${getApiBaseUrl()}/api/batch/start`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -4084,7 +4129,7 @@ if __name__ == "__main__":
 
     async function pollBatchStatus() {
       try {
-        const res = await fetch(`http://localhost:${backendPort}/api/batch/status`);
+        const res = await fetch(`${getApiBaseUrl()}/api/batch/status`);
         if (!res.ok) return;
         const data = await res.json();
         updateBatchBanner(data);
@@ -4151,10 +4196,10 @@ if __name__ == "__main__":
 
     async function toggleBatchPause() {
       try {
-        const statusRes = await fetch(`http://localhost:${backendPort}/api/batch/status`);
+        const statusRes = await fetch(`${getApiBaseUrl()}/api/batch/status`);
         const statusData = await statusRes.json();
         const endpoint = (statusData.is_paused || statusData.status === 'paused') ? 'resume' : 'pause';
-        await fetch(`http://localhost:${backendPort}/api/batch/${endpoint}`, { method: 'POST' });
+        await fetch(`${getApiBaseUrl()}/api/batch/${endpoint}`, { method: 'POST' });
         pollBatchStatus();
       } catch (err) {
         showToast("Error updating batch state: " + err.message);
@@ -4164,7 +4209,7 @@ if __name__ == "__main__":
     async function cancelBatchRun() {
       if (confirm("Are you sure you want to stop the remaining batch queue? Currently running memo will complete.")) {
         try {
-          await fetch(`http://localhost:${backendPort}/api/batch/cancel`, { method: 'POST' });
+          await fetch(`${getApiBaseUrl()}/api/batch/cancel`, { method: 'POST' });
           showToast("Batch processing stopped.");
           pollBatchStatus();
         } catch (err) {
@@ -4176,7 +4221,7 @@ if __name__ == "__main__":
     async function fetchLibrarySilently() {
       try {
         const query = currentLibraryPath ? `?path=${encodeURIComponent(currentLibraryPath)}` : '';
-        const res = await fetch(`http://localhost:${backendPort}/api/library${query}`);
+        const res = await fetch(`${getApiBaseUrl()}/api/library${query}`);
         if (res.ok) {
           const data = await res.json();
           libraryRecordings = data.recordings || [];
@@ -4250,7 +4295,7 @@ if __name__ == "__main__":
           speaker_metadata: SPEAKER_METADATA
         };
 
-        const res = await fetch(`http://localhost:${backendPort}/api/recordings/${currentRecordingId.split('/').map(encodeURIComponent).join('/')}/transcript${query}`, {
+        const res = await fetch(`${getApiBaseUrl()}/api/recordings/${encodeURIComponent(currentRecordingId)}/transcript${query}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
@@ -4452,7 +4497,7 @@ if __name__ == "__main__":
 
       // Sync with local backend if available
       try {
-        const res = await fetch(`http://localhost:${backendPort}/api/settings`);
+        const res = await fetch(`${getApiBaseUrl()}/api/settings`);
         if (res.ok) {
           const data = await res.json();
           if (keyInput && !keyInput.value && data.gemini_api_key) {
@@ -4480,7 +4525,7 @@ if __name__ == "__main__":
       localStorage.setItem('memosplit_default_engine', currentEngine);
 
       try {
-        await fetch(`http://localhost:${backendPort}/api/settings`, {
+        await fetch(`${getApiBaseUrl()}/api/settings`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -4906,7 +4951,7 @@ if __name__ == "__main__":
             speaker_metadata: SPEAKER_METADATA
           };
 
-          const res = await fetch(`http://localhost:${backendPort}/api/recordings/${currentRecordingId.split('/').map(encodeURIComponent).join('/')}/transcript${query}`, {
+          const res = await fetch(`${getApiBaseUrl()}/api/recordings/${encodeURIComponent(currentRecordingId)}/transcript${query}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)

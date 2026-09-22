@@ -217,6 +217,8 @@ class MemoSplitHandler(BaseHTTPRequestHandler):
 
         self.send_error(404, "Not Found")
 
+    do_PUT = do_POST
+
     def handle_static_file(self, req_path):
         if req_path in ("/", "", "/index.html"):
             file_name = "index.html"
