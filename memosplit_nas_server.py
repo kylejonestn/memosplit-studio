@@ -169,7 +169,7 @@ class MemoSplitHandler(BaseHTTPRequestHandler):
             })
             return
 
-        if path == "/api/recordings":
+        if path in ("/api/recordings", "/api/library"):
             scan_path = query.get("path", [MEDIA_ROOT])[0]
             if not os.path.isabs(scan_path):
                 scan_path = os.path.join(MEDIA_ROOT, scan_path)
