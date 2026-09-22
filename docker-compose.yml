@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  memosplit:
+    image: python:3.11-alpine
+    container_name: memosplit-studio
+    restart: unless-stopped
+    ports:
+      - "8088:8088"
+    environment:
+      - PORT=8088
+      - MEMOSPLIT_MEDIA_ROOT=/data
+    volumes:
+      - .:/app
+      - /shares/Public:/data
+    working_dir: /app
+    command: python3 memosplit_nas_server.py
