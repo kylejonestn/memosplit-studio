@@ -132,6 +132,37 @@ def serialize_to_srt(segments, speaker_meta=None) -> str:
         lines.append(f"{i}\n{start_str} --> {end_str}\n[{display_label}]: {text}\n")
     return "\n".join(lines)
 
+def format_vtt_time(seconds: float) -> str:
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    secs = int(seconds % 60)
+    millis = int(round((seconds - int(seconds)) * 1000))
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}.{millis:03d}"
+
+def serialize_to_vtt(segments, speaker_meta=None) -> str:
+    out = ["WEBVTT\n"]
+    meta = speaker_meta or {}
+    for seg in segments:
+        spk_key = seg.get("speaker", "Speaker 1")
+        label = meta.get(spk_key, {}).get("label", spk_key)
+        start_str = format_vtt_time(seg.get("start", 0))
+        end_str = format_vtt_time(seg.get("end", 0))
+        out.append(f"{start_str} --> {end_str}\n<v {label}>{seg.get('text', '').strip()}\n")
+    return "\n".join(out)
+
+def serialize_to_txt(segments, speaker_meta=None) -> str:
+    out = []
+    meta = speaker_meta or {}
+    for seg in segments:
+        spk_key = seg.get("speaker", "Speaker 1")
+        label = meta.get(spk_key, {}).get("label", spk_key)
+        start_sec = seg.get("start", 0)
+        mins = int(start_sec // 60)
+        secs = int(start_sec % 60)
+        time_str = f"[{mins:02d}:{secs:02d}]"
+        out.append(f"{label} {time_str}:\n{seg.get('text', '').strip()}\n\n")
+    return "".join(out)
+
 # -----------------------------------------------------------------------------
 # HTTP Request Handler
 # -----------------------------------------------------------------------------
@@ -441,6 +472,7 @@ class MemoSplitHandler(BaseHTTPRequestHandler):
             segments = data.get("segments", [])
             speaker_meta = data.get("speaker_metadata", {})
             duration = data.get("duration", 0)
+            raw_text = data.get("raw_text", "")
 
             # 1. Write JSON
             json_path = base_path + ".json"
@@ -457,7 +489,20 @@ class MemoSplitHandler(BaseHTTPRequestHandler):
             with open(srt_path, "w", encoding="utf-8") as sf:
                 sf.write(serialize_to_srt(segments, speaker_meta))
 
-            self.send_json({"status": "saved", "json": json_path, "srt": srt_path})
+            # 3. Write WebVTT
+            vtt_path = base_path + ".vtt"
+            with open(vtt_path, "w", encoding="utf-8") as vf:
+                vf.write(serialize_to_vtt(segments, speaker_meta))
+
+            # 4. Write TXT
+            txt_path = base_path + ".txt"
+            with open(txt_path, "w", encoding="utf-8") as tf:
+                if raw_text:
+                    tf.write(raw_text)
+                elif segments:
+                    tf.write(serialize_to_txt(segments, speaker_meta))
+
+            self.send_json({"status": "saved", "json": json_path, "srt": srt_path, "vtt": vtt_path, "txt": txt_path})
         except Exception as e:
             self.send_error(500, f"Failed to save transcript: {e}")
 

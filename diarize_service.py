@@ -753,6 +753,7 @@ def save_transcript_files(lib_path: str, filename: str, segments: List[Dict[str,
     print(f"[✓] All transcript files saved for '{filename}'")
     return [f"{file_base}.json", f"{file_base}.srt", f"{file_base}.vtt", f"{file_base}.txt"]
 
+@app.post("/api/recordings/{filename:path}/transcript")
 @app.put("/api/recordings/{filename:path}/transcript")
 async def save_transcript(filename: str, payload: TranscriptUpdateRequest, path: Optional[str] = None):
     lib_path = get_library_path(path)

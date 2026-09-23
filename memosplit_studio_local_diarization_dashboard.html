@@ -3455,6 +3455,40 @@ if __name__ == "__main__":
         }
       }
 
+      // Server / NAS Mode: Save directly to server backend
+      try {
+        const query = currentLibraryPath ? `?path=${encodeURIComponent(currentLibraryPath)}` : '';
+        const payload = {
+          filename: currentRecordingId,
+          duration: totalDuration,
+          segments: transcriptSegments,
+          speaker_metadata: SPEAKER_METADATA,
+          raw_text: text
+        };
+        let res = await fetch(`${getApiBaseUrl()}/api/recordings/${encodeURIComponent(currentRecordingId)}/transcript${query}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        if (!res.ok && (res.status === 405 || res.status === 501)) {
+          res = await fetch(`${getApiBaseUrl()}/api/recordings/${encodeURIComponent(currentRecordingId)}/transcript${query}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+        }
+        if (res.ok) {
+          showToast(`Saved draft transcript to ${baseName}.txt on server!`);
+          if (recObj) {
+            recObj.has_transcript = true;
+            recObj.has_raw_transcript = true;
+          }
+          return;
+        }
+      } catch (err) {
+        console.warn("Could not save raw txt to server, falling back to download:", err);
+      }
+
       const blob = new Blob([text], { type: "text/plain" });
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
@@ -4280,8 +4314,21 @@ if __name__ == "__main__":
         const recObj = libraryRecordings.find(r => r.relative_path === currentRecordingId || r.filename === currentRecordingId);
         const baseName = currentRecordingId ? currentRecordingId.replace(/\.[^/.]+$/, "") : "VoiceMemo";
 
+        const pasteTextarea = document.getElementById('studio-paste-transcript');
+        const rawText = pasteTextarea ? pasteTextarea.value.trim() : '';
+
         if (isLocalFolderMode && recObj && recObj.dirHandle) {
-          await saveDiarizationFilesToLocalFolder(recObj.dirHandle, recObj.baseName || baseName, transcriptSegments, totalDuration);
+          if (transcriptSegments && transcriptSegments.length > 0) {
+            await saveDiarizationFilesToLocalFolder(recObj.dirHandle, recObj.baseName || baseName, transcriptSegments, totalDuration);
+          }
+          if (rawText) {
+            try {
+              const tH = await recObj.dirHandle.getFileHandle(`${recObj.baseName || baseName}.txt`, { create: true });
+              const tW = await tH.createWritable();
+              await tW.write(rawText);
+              await tW.close();
+            } catch (e) {}
+          }
           setUnsavedEdits(false);
           showToast(`✓ Saved edits to ${currentRecordingId} directly in local folder!`);
           return;
@@ -4292,21 +4339,35 @@ if __name__ == "__main__":
           filename: currentRecordingId,
           duration: totalDuration,
           segments: transcriptSegments,
-          speaker_metadata: SPEAKER_METADATA
+          speaker_metadata: SPEAKER_METADATA,
+          raw_text: rawText
         };
 
-        const res = await fetch(`${getApiBaseUrl()}/api/recordings/${encodeURIComponent(currentRecordingId)}/transcript${query}`, {
-          method: 'PUT',
+        let res = await fetch(`${getApiBaseUrl()}/api/recordings/${encodeURIComponent(currentRecordingId)}/transcript${query}`, {
+          method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
         });
 
+        if (!res.ok && (res.status === 405 || res.status === 501)) {
+          res = await fetch(`${getApiBaseUrl()}/api/recordings/${encodeURIComponent(currentRecordingId)}/transcript${query}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+        }
+
         if (res.ok) {
           const result = await res.json();
           setUnsavedEdits(false);
-          showToast(`Saved edits to ${currentRecordingId} (.srt, .vtt, .txt, .json)!`);
+          if (recObj) {
+            if (transcriptSegments && transcriptSegments.length > 0) recObj.has_transcript = true;
+            if (rawText) recObj.has_raw_transcript = true;
+          }
+          showToast(`✓ Saved edits to ${currentRecordingId} (.srt, .vtt, .txt, .json)!`);
         } else {
-          throw new Error("Failed to save");
+          const errText = await res.text().catch(() => '');
+          throw new Error(`Server returned ${res.status}: ${errText || res.statusText}`);
         }
       } catch (err) {
         showToast(`Error saving edits: ${err.message}`);
@@ -4951,15 +5012,23 @@ if __name__ == "__main__":
             speaker_metadata: SPEAKER_METADATA
           };
 
-          const res = await fetch(`${getApiBaseUrl()}/api/recordings/${encodeURIComponent(currentRecordingId)}/transcript${query}`, {
-            method: 'PUT',
+          let res = await fetch(`${getApiBaseUrl()}/api/recordings/${encodeURIComponent(currentRecordingId)}/transcript${query}`, {
+            method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
           });
 
+          if (!res.ok && (res.status === 405 || res.status === 501)) {
+            res = await fetch(`${getApiBaseUrl()}/api/recordings/${encodeURIComponent(currentRecordingId)}/transcript${query}`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload)
+            });
+          }
+
           if (res.ok) {
             const targetMeta = SPEAKER_METADATA[targetSpeaker] || { label: targetSpeaker };
-            showToast(`✓ Reassigned line to ${targetMeta.label} and saved to MyCloud!`);
+            showToast(`✓ Reassigned line to ${targetMeta.label} and saved!`);
           }
         } catch (e) {
           console.warn("Auto-save error after reassign:", e);
