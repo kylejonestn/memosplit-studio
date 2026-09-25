@@ -1092,12 +1092,15 @@
           
           <!-- Speaker Profiles & Edit names -->
           <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 flex flex-col gap-4">
-            <div class="flex items-center justify-between">
+            <div class="flex items-center justify-between gap-2">
               <div class="flex items-center gap-2">
                 <i data-lucide="users" class="w-4 h-4 text-cyan-400"></i>
                 <h2 class="text-sm font-semibold text-white">Identified Speakers</h2>
               </div>
-              <span class="text-xs text-slate-400">Pyannote Clustering</span>
+              <button id="btn-auto-name-speakers" onclick="autoDeduceSpeakerNamesWithGemini()" class="px-2.5 py-1 bg-gradient-to-r from-indigo-600 to-cyan-600 hover:from-indigo-500 hover:to-cyan-500 text-white rounded-lg text-xs font-medium flex items-center gap-1.5 shadow-sm transition disabled:opacity-50" title="Deduce real speaker names from introductions and conversational context using Gemini AI">
+                <i data-lucide="sparkles" class="w-3.5 h-3.5 text-yellow-300"></i>
+                <span>Auto-Name with AI</span>
+              </button>
             </div>
 
             <div id="speakers-card-list" class="space-y-3">
@@ -1646,22 +1649,27 @@ if __name__ == "__main__":
         opt.innerText = `${meta.label} (${pct}% spoken time)`;
         selectSlice.appendChild(opt);
 
+        const roleBadge = (meta.role && meta.role !== 'Speaker')
+          ? `<span class="text-[10px] text-cyan-400 bg-cyan-950/70 border border-cyan-800/50 px-1.5 py-0.5 rounded font-mono truncate max-w-[130px]" title="${meta.role}">${meta.role}</span>`
+          : '';
+
         // Speaker Card in list
         const card = document.createElement('div');
         card.className = 'bg-slate-950 p-3 rounded-xl border border-slate-800/80 flex items-center justify-between gap-3';
         card.innerHTML = `
-          <div class="flex items-center gap-3">
-            <div class="w-8 h-8 rounded-lg flex items-center justify-center text-white font-semibold text-xs" style="background-color: ${meta.color}">
+          <div class="flex items-center gap-3 min-w-0 flex-1">
+            <div class="w-8 h-8 rounded-lg flex items-center justify-center text-white font-semibold text-xs flex-shrink-0" style="background-color: ${meta.color}">
               ${meta.label.charAt(0)}
             </div>
-            <div>
-              <div class="flex items-center gap-2">
-                <input type="text" value="${meta.label}" onchange="updateSpeakerName('${speakerKey}', this.value)" class="bg-transparent text-xs font-semibold text-white border-b border-transparent hover:border-slate-700 focus:border-indigo-500 focus:outline-none w-28">
+            <div class="min-w-0 flex-1">
+              <div class="flex items-center gap-1.5 flex-wrap">
+                <input type="text" value="${meta.label}" onchange="updateSpeakerName('${speakerKey}', this.value)" class="bg-transparent text-xs font-semibold text-white border-b border-transparent hover:border-slate-700 focus:border-indigo-500 focus:outline-none w-32 sm:w-40 truncate" title="Click to rename ${meta.label}">
+                ${roleBadge}
               </div>
-              <span class="text-[11px] text-slate-400">${stats[speakerKey].count} speaking turns • ${durationSec.toFixed(1)}s total</span>
+              <span class="text-[11px] text-slate-400 block truncate mt-0.5">${stats[speakerKey].count} speaking turns • ${durationSec.toFixed(1)}s total</span>
             </div>
           </div>
-          <div class="text-right">
+          <div class="text-right flex-shrink-0">
             <span class="text-xs font-mono font-bold text-slate-300">${pct}%</span>
             <div class="w-16 bg-slate-800 h-1.5 rounded-full overflow-hidden mt-1">
               <div class="h-full rounded-full" style="width: ${pct}%; background-color: ${meta.color}"></div>
@@ -1902,13 +1910,165 @@ if __name__ == "__main__":
     }
 
     function updateSpeakerName(speakerKey, newName) {
-      if (SPEAKER_METADATA[speakerKey]) {
+      if (!SPEAKER_METADATA[speakerKey]) {
+        const palette = ["#38bdf8", "#a855f7", "#10b981", "#f59e0b", "#ec4899", "#6366f1", "#14b8a6", "#f97316"];
+        const color = palette[Object.keys(SPEAKER_METADATA).length % palette.length];
+        SPEAKER_METADATA[speakerKey] = { label: newName, role: "Speaker", color };
+      } else {
         SPEAKER_METADATA[speakerKey].label = newName;
       }
+      setUnsavedEdits(true);
       renderSpeakerCards();
       renderTranscript();
       renderDiarizationStrip();
+      if (typeof renderPlayerTranscriptStream === 'function') renderPlayerTranscriptStream();
       showToast(`Updated speaker name to "${newName}"`);
+    }
+
+    async function autoDeduceSpeakerNamesWithGemini(isSilent = false) {
+      if (!transcriptSegments || transcriptSegments.length === 0) {
+        if (!isSilent) showToast("No transcript segments loaded to analyze.");
+        return false;
+      }
+
+      const apiKey = getGeminiApiKey();
+      if (!apiKey) {
+        if (!isSilent) {
+          toggleGeminiSettingsModal();
+          showToast("Please enter your Google Gemini API Key in Settings.");
+        }
+        return false;
+      }
+
+      const btn = document.getElementById('btn-auto-name-speakers');
+      const originalBtnHtml = btn ? btn.innerHTML : '';
+      if (btn && !isSilent) {
+        btn.disabled = true;
+        btn.innerHTML = `<i data-lucide="loader-2" class="w-3.5 h-3.5 animate-spin"></i> Deducing...`;
+        if (window.lucide) lucide.createIcons();
+      }
+
+      const models = [
+        getGeminiModel(),
+        'gemini-3.5-flash-lite',
+        'gemini-3.6-flash',
+        'gemini-flash-lite-latest',
+        'gemini-flash-latest'
+      ].filter((v, i, a) => v && a.indexOf(v) === i);
+
+      // Collect all distinct speakers present in this recording
+      const speakerKeys = [...new Set(transcriptSegments.map(s => s.speaker).filter(Boolean))];
+      if (speakerKeys.length === 0) {
+        if (btn && !isSilent) {
+          btn.disabled = false;
+          btn.innerHTML = originalBtnHtml;
+          if (window.lucide) lucide.createIcons();
+        }
+        return false;
+      }
+
+      // Sample first 150 turns (or whole transcript if <= 150) for speaker introductions
+      const sampleSegments = transcriptSegments.slice(0, 150);
+      const sampleText = sampleSegments.map(s => {
+        const time = formatTime(s.start);
+        const currMeta = SPEAKER_METADATA[s.speaker] || {};
+        const currLabel = currMeta.label ? `(${currMeta.label})` : '';
+        return `[${time}] ${s.speaker} ${currLabel}: ${s.text}`;
+      }).join('\n');
+
+      const deducePrompt = `You are an expert audio transcript analyzer. Analyze the meeting transcript excerpt below to identify and deduce the real human names and roles of the speakers based on self-introductions (e.g. "I'm Adam", "My name is Suzy Douglas, Assistant Administrator"), greetings, when other speakers address them by name (e.g. "Thanks Alex", "Matthew, do you want to start?", "Kyle, any thoughts?"), and organizational roles mentioned.
+
+Transcript Excerpt:
+${sampleText}
+
+Speaker Keys to Identify:
+${speakerKeys.join(', ')}
+
+INSTRUCTIONS:
+1. For each speaker key (e.g. SPEAKER_00, SPEAKER_01...), deduce their most likely real name (Full Name or First Name) and optional job title or organization role.
+2. If a speaker's name cannot be identified with certainty, supply a descriptive role or friendly title (e.g. "Speaker 1" or "Guest").
+3. Return ONLY a valid JSON object mapping each speaker key to their deduced name and role. Do not include markdown code fence formatting or explanations.
+
+Schema:
+{
+  "${speakerKeys[0] || 'SPEAKER_00'}": { "name": "Adam", "role": "CapTech Lead" }
+}`;
+
+      let deductionSuccess = false;
+      let namedCount = 0;
+
+      for (const model of models) {
+        try {
+          const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: deducePrompt }] }],
+              generationConfig: {
+                temperature: 0.1,
+                responseMimeType: "application/json"
+              }
+            })
+          });
+
+          if (!res.ok) continue;
+          const data = await res.json();
+          const cand = data.candidates?.[0]?.content?.parts?.[0]?.text;
+          if (!cand) continue;
+
+          let cleanedJson = cand.replace(/```json/gi, '').replace(/```/g, '').trim();
+          const parsed = JSON.parse(cleanedJson);
+
+          if (parsed && typeof parsed === 'object') {
+            const palette = ["#38bdf8", "#a855f7", "#10b981", "#f59e0b", "#ec4899", "#6366f1", "#14b8a6", "#f97316"];
+            for (const [spkKey, val] of Object.entries(parsed)) {
+              let name = '';
+              let role = 'Speaker';
+              if (typeof val === 'string') {
+                name = val.trim();
+              } else if (val && typeof val === 'object') {
+                name = (val.name || val.label || val.speaker_name || '').trim();
+                role = (val.role || val.title || 'Speaker').trim();
+              }
+
+              if (name && name !== spkKey) {
+                if (!SPEAKER_METADATA[spkKey]) {
+                  const color = palette[Object.keys(SPEAKER_METADATA).length % palette.length];
+                  SPEAKER_METADATA[spkKey] = { label: name, role: role, color: color };
+                } else {
+                  SPEAKER_METADATA[spkKey].label = name;
+                  if (role && role !== 'Speaker') SPEAKER_METADATA[spkKey].role = role;
+                }
+                namedCount++;
+              }
+            }
+
+            deductionSuccess = true;
+            break;
+          }
+        } catch (e) {
+          console.warn(`[MemoSplit] Speaker name deduction with ${model} failed:`, e);
+        }
+      }
+
+      if (btn && !isSilent) {
+        btn.disabled = false;
+        btn.innerHTML = originalBtnHtml;
+        if (window.lucide) lucide.createIcons();
+      }
+
+      if (deductionSuccess && namedCount > 0) {
+        renderSpeakerCards();
+        renderTranscript();
+        renderDiarizationStrip();
+        if (typeof renderPlayerTranscriptStream === 'function') renderPlayerTranscriptStream();
+        await saveTranscriptEdits();
+        if (!isSilent) showToast(`✨ Identified & named ${namedCount} speakers from introductions!`);
+        return true;
+      } else if (!isSilent) {
+        showToast("AI analyzed the transcript but could not find explicit introductions.");
+      }
+      return false;
     }
 
     function handleAudioUpload(event) {
@@ -3638,6 +3798,14 @@ if __name__ == "__main__":
                 SPEAKER_METADATA[s.speaker] = { label: s.speaker, role: "Speaker", color };
               }
             });
+
+            // Automatically deduce real speaker names and roles from introductions
+            statusEl.innerText = "✨ AI deducing real speaker names from introductions...";
+            try {
+              await autoDeduceSpeakerNamesWithGemini(true);
+            } catch (deduceErr) {
+              console.warn("Auto-deduce speaker names error:", deduceErr);
+            }
 
             setPhases(4);
             statusEl.innerText = isLocalFolderMode
