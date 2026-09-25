@@ -163,6 +163,28 @@ def serialize_to_txt(segments, speaker_meta=None) -> str:
         out.append(f"{label} {time_str}:\n{seg.get('text', '').strip()}\n\n")
     return "".join(out)
 
+def safe_write_file(file_path: str, content, is_json: bool = False):
+    """Atomic write to disk to prevent partial corruption or zero-byte file writes."""
+    tmp_path = f"{file_path}.tmp_{os.getpid()}_{int(time.time() * 1000)}"
+    parent = os.path.dirname(file_path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            if is_json:
+                json.dump(content, f, indent=2, ensure_ascii=False)
+            else:
+                f.write(content)
+        os.replace(tmp_path, file_path)
+        return True
+    except Exception as e:
+        if os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
+        raise e
+
 # -----------------------------------------------------------------------------
 # HTTP Request Handler
 # -----------------------------------------------------------------------------
@@ -424,41 +446,57 @@ class MemoSplitHandler(BaseHTTPRequestHandler):
         vtt_file = base_path + ".vtt"
         txt_file = base_path + ".txt"
 
+        raw_text_content = ""
+        # Check if companion txt file exists
+        if os.path.isfile(txt_file):
+            try:
+                with open(txt_file, "r", encoding="utf-8", errors="ignore") as tf:
+                    raw_text_content = tf.read().strip()
+            except Exception:
+                pass
+
+        # 1. Try loading structured JSON if it contains valid segments
         if os.path.isfile(json_file):
             try:
                 with open(json_file, "r", encoding="utf-8") as jf:
                     data = json.load(jf)
-                    self.send_json(data)
-                    return
+                    if data.get("segments") and len(data["segments"]) > 0:
+                        if raw_text_content and not data.get("raw_text"):
+                            data["raw_text"] = raw_text_content
+                        self.send_json(data)
+                        return
             except Exception as e:
                 pass
 
+        # 2. Try loading SRT or VTT if it contains valid segments
         if os.path.isfile(srt_file) or os.path.isfile(vtt_file):
             target = srt_file if os.path.isfile(srt_file) else vtt_file
             try:
-                with open(target, "r", encoding="utf-8") as sf:
-                    segs = parse_srt_content(sf.read())
-                    self.send_json({
-                        "segments": segs,
-                        "duration": segs[-1]["end"] if segs else 0,
-                        "source": "srt"
-                    })
-                    return
+                with open(target, "r", encoding="utf-8", errors="ignore") as sf:
+                    content = sf.read().strip()
+                    if content:
+                        segs = parse_srt_content(content)
+                        if segs and len(segs) > 0:
+                            self.send_json({
+                                "segments": segs,
+                                "duration": segs[-1]["end"] if segs else 0,
+                                "raw_text": raw_text_content,
+                                "source": "srt"
+                            })
+                            return
             except Exception as e:
                 pass
 
-        if os.path.isfile(txt_file):
-            try:
-                with open(txt_file, "r", encoding="utf-8") as tf:
-                    raw = tf.read()
-                    self.send_json({
-                        "segments": [],
-                        "raw_text": raw,
-                        "source": "txt"
-                    })
-                    return
-            except Exception as e:
-                pass
+        # 3. If raw text exists, return it as draft transcript
+        if raw_text_content:
+            self.send_json({
+                "segments": [],
+                "raw_text": raw_text_content,
+                "duration": 0,
+                "source": "txt",
+                "has_raw_transcript": True
+            })
+            return
 
         self.send_json({"segments": [], "speaker_metadata": {}, "duration": 0})
 
@@ -474,35 +512,46 @@ class MemoSplitHandler(BaseHTTPRequestHandler):
             duration = data.get("duration", 0)
             raw_text = data.get("raw_text", "")
 
-            # 1. Write JSON
-            json_path = base_path + ".json"
-            with open(json_path, "w", encoding="utf-8") as jf:
-                json.dump({
+            # Guard against accidental empty overwrite of valid files
+            if not segments and not raw_text:
+                self.send_json({"status": "ignored_empty"})
+                return
+
+            saved_map = {}
+
+            # 1. Write JSON atomically if segments provided
+            if segments:
+                json_path = base_path + ".json"
+                safe_write_file(json_path, {
                     "duration": duration,
                     "segments": segments,
                     "speaker_metadata": speaker_meta,
-                    "updated_at": os.path.getmtime(full_path) if os.path.exists(full_path) else None
-                }, jf, indent=2, ensure_ascii=False)
+                    "updated_at": os.path.getmtime(full_path) if os.path.exists(full_path) else time.time()
+                }, is_json=True)
+                saved_map["json"] = json_path
 
-            # 2. Write Otter-compatible SRT
-            srt_path = base_path + ".srt"
-            with open(srt_path, "w", encoding="utf-8") as sf:
-                sf.write(serialize_to_srt(segments, speaker_meta))
+            # 2. Write Otter-compatible SRT atomically if segments provided
+            if segments:
+                srt_path = base_path + ".srt"
+                safe_write_file(srt_path, serialize_to_srt(segments, speaker_meta))
+                saved_map["srt"] = srt_path
 
-            # 3. Write WebVTT
-            vtt_path = base_path + ".vtt"
-            with open(vtt_path, "w", encoding="utf-8") as vf:
-                vf.write(serialize_to_vtt(segments, speaker_meta))
+            # 3. Write WebVTT atomically if segments provided
+            if segments:
+                vtt_path = base_path + ".vtt"
+                safe_write_file(vtt_path, serialize_to_vtt(segments, speaker_meta))
+                saved_map["vtt"] = vtt_path
 
-            # 4. Write TXT
-            txt_path = base_path + ".txt"
-            with open(txt_path, "w", encoding="utf-8") as tf:
+            # 4. Write TXT atomically if raw_text or segments provided
+            if raw_text or segments:
+                txt_path = base_path + ".txt"
                 if raw_text:
-                    tf.write(raw_text)
-                elif segments:
-                    tf.write(serialize_to_txt(segments, speaker_meta))
+                    safe_write_file(txt_path, raw_text)
+                else:
+                    safe_write_file(txt_path, serialize_to_txt(segments, speaker_meta))
+                saved_map["txt"] = txt_path
 
-            self.send_json({"status": "saved", "json": json_path, "srt": srt_path, "vtt": vtt_path, "txt": txt_path})
+            self.send_json({"status": "saved", **saved_map})
         except Exception as e:
             self.send_error(500, f"Failed to save transcript: {e}")
 
