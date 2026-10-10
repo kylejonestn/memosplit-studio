@@ -4460,13 +4460,230 @@ Schema:
       if (modal) modal.classList.add('hidden');
     }
 
+    let clientBatchState = {
+      status: 'idle',
+      queue: [],
+      currentIndex: 0,
+      totalCount: 0,
+      completedCount: 0,
+      failedCount: 0,
+      startTime: 0,
+      elapsedTotal: 0,
+      throttleDelay: 2,
+      currentFile: '',
+      currentPercent: 0,
+      currentStageDetail: '',
+      currentAudioDuration: 0,
+      isPaused: false,
+      cancelled: false
+    };
+
+    function getClientBatchStatus() {
+      const elapsed = clientBatchState.startTime ? (Date.now() - clientBatchState.startTime) / 1000 : 0;
+      const remainingCount = Math.max(0, clientBatchState.totalCount - clientBatchState.currentIndex);
+      const estSec = selectedBatchEngine === 'gemini' ? remainingCount * 18 : remainingCount * 60;
+      return {
+        status: clientBatchState.status,
+        current_file: clientBatchState.currentFile,
+        batch_current_index: clientBatchState.currentIndex,
+        batch_total_count: clientBatchState.totalCount,
+        current_stage_detail: clientBatchState.currentStageDetail,
+        current_audio_duration: clientBatchState.currentAudioDuration,
+        current_percent: clientBatchState.currentPercent,
+        current_eta: 15,
+        batch_eta_total: estSec,
+        batch_completed_count: clientBatchState.completedCount,
+        batch_elapsed_total: elapsed,
+        is_paused: clientBatchState.isPaused
+      };
+    }
+
+    async function startClientSideBatchQueue(pendingQueue, throttleDelay = 2) {
+      if (!pendingQueue || pendingQueue.length === 0) {
+        showToast("All voice memos are already diarized!");
+        return;
+      }
+
+      const apiKey = getGeminiApiKey();
+      if (selectedBatchEngine === 'gemini' && !apiKey) {
+        toggleGeminiSettingsModal();
+        showToast("Please enter your Google Gemini API Key in Settings to run batch diarization.");
+        return;
+      }
+
+      clientBatchState.status = 'running';
+      clientBatchState.queue = [...pendingQueue];
+      clientBatchState.totalCount = pendingQueue.length;
+      clientBatchState.currentIndex = 0;
+      clientBatchState.completedCount = 0;
+      clientBatchState.failedCount = 0;
+      clientBatchState.startTime = Date.now();
+      clientBatchState.throttleDelay = throttleDelay;
+      clientBatchState.isPaused = false;
+      clientBatchState.cancelled = false;
+
+      updateBatchBanner(getClientBatchStatus());
+      showToast(`⚡ Started background batch queue for ${pendingQueue.length} memos!`);
+
+      for (let i = 0; i < clientBatchState.queue.length; i++) {
+        if (clientBatchState.cancelled) break;
+
+        while (clientBatchState.isPaused) {
+          await new Promise(r => setTimeout(r, 1000));
+          if (clientBatchState.cancelled) break;
+        }
+        if (clientBatchState.cancelled) break;
+
+        const rec = clientBatchState.queue[i];
+        clientBatchState.currentIndex = i + 1;
+        clientBatchState.currentFile = rec.filename;
+        clientBatchState.currentPercent = 10;
+        clientBatchState.currentStageDetail = `Loading audio for ${rec.filename}...`;
+        clientBatchState.currentAudioDuration = rec.duration || 60;
+        updateBatchBanner(getClientBatchStatus());
+
+        try {
+          // 1. Obtain audio file/blob
+          let audioFile = null;
+          if (isLocalFolderMode && rec.audioHandle) {
+            audioFile = await rec.audioHandle.getFile();
+          } else {
+            const query = currentLibraryPath ? `?path=${encodeURIComponent(currentLibraryPath)}` : '';
+            const audioUrl = `${getApiBaseUrl()}/api/recordings/${encodeURIComponent(rec.relative_path || rec.filename)}/audio${query}`;
+            const audioRes = await fetch(audioUrl);
+            if (!audioRes.ok) throw new Error(`Could not load audio: HTTP ${audioRes.status}`);
+            const audioBlob = await audioRes.blob();
+            audioFile = new File([audioBlob], rec.filename, { type: audioBlob.type || 'audio/mp4' });
+          }
+
+          // 2. Fetch draft text if companion txt exists
+          let draftText = null;
+          if (isLocalFolderMode && rec.txtHandle) {
+            try {
+              const tf = await rec.txtHandle.getFile();
+              draftText = await tf.text();
+            } catch (e) {}
+          } else if (!isLocalFolderMode) {
+            try {
+              const query = currentLibraryPath ? `?path=${encodeURIComponent(currentLibraryPath)}` : '';
+              const tRes = await fetch(`${getApiBaseUrl()}/api/recordings/${encodeURIComponent(rec.relative_path || rec.filename)}/transcript${query}`);
+              if (tRes.ok) {
+                const tData = await tRes.json();
+                if (tData.raw_text) draftText = tData.raw_text;
+              }
+            } catch (e) {}
+          }
+
+          // 3. Run Diarization via Gemini
+          clientBatchState.currentPercent = 25;
+          clientBatchState.currentStageDetail = `Processing with Google Gemini Cloud AI...`;
+          updateBatchBanner(getClientBatchStatus());
+
+          const result = await diarizeAudioWithGeminiInBrowser(audioFile, draftText, (prog) => {
+            clientBatchState.currentPercent = prog.percent || clientBatchState.currentPercent;
+            clientBatchState.currentStageDetail = prog.stage_detail || clientBatchState.currentStageDetail;
+            updateBatchBanner(getClientBatchStatus());
+          });
+
+          if (!result || !result.segments || result.segments.length === 0) {
+            throw new Error("No speaker segments were returned by Gemini");
+          }
+
+          // 4. Auto-deduce speaker real names from introductions
+          clientBatchState.currentPercent = 85;
+          clientBatchState.currentStageDetail = `✨ Deducing speaker names from introductions...`;
+          updateBatchBanner(getClientBatchStatus());
+
+          transcriptSegments = result.segments;
+          totalDuration = result.duration || (result.segments[result.segments.length - 1].end);
+          result.segments.forEach(s => {
+            if (!SPEAKER_METADATA[s.speaker]) {
+              const palette = ["#38bdf8", "#a855f7", "#10b981", "#f59e0b", "#ec4899", "#6366f1", "#14b8a6", "#f97316"];
+              const color = palette[Object.keys(SPEAKER_METADATA).length % palette.length];
+              SPEAKER_METADATA[s.speaker] = { label: s.speaker, role: "Speaker", color };
+            }
+          });
+
+          try {
+            await autoDeduceSpeakerNamesWithGemini(true);
+          } catch (deduceErr) {
+            console.warn("Batch auto-deduce speaker error:", deduceErr);
+          }
+
+          // 5. Save back to local folder or NAS server
+          clientBatchState.currentPercent = 95;
+          clientBatchState.currentStageDetail = `Saving transcript & speaker turns...`;
+          updateBatchBanner(getClientBatchStatus());
+
+          if (isLocalFolderMode && rec.dirHandle) {
+            await saveDiarizationFilesToLocalFolder(rec.dirHandle, rec.baseName, transcriptSegments, totalDuration);
+          } else {
+            const query = currentLibraryPath ? `?path=${encodeURIComponent(currentLibraryPath)}` : '';
+            const saveUrl = `${getApiBaseUrl()}/api/recordings/${encodeURIComponent(rec.relative_path || rec.filename)}/transcript${query}`;
+            await fetch(saveUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                segments: transcriptSegments,
+                speaker_metadata: SPEAKER_METADATA,
+                duration: totalDuration
+              })
+            });
+          }
+
+          rec.has_transcript = true;
+          rec.has_speakers = true;
+          rec.duration = totalDuration;
+          rec.speakers = [...new Set(transcriptSegments.map(s => s.speaker))];
+          clientBatchState.completedCount++;
+
+          if (isLocalFolderMode) renderLibraryExplorer();
+          else fetchLibrarySilently();
+
+        } catch (itemErr) {
+          console.error(`Batch processing failed for ${rec.filename}:`, itemErr);
+          clientBatchState.failedCount++;
+        }
+
+        // Gentle thermal pause if requested
+        if (throttleDelay > 0 && i < clientBatchState.queue.length - 1 && !clientBatchState.cancelled) {
+          clientBatchState.currentPercent = 100;
+          clientBatchState.currentStageDetail = `Cool-down pause (${throttleDelay}s)...`;
+          updateBatchBanner(getClientBatchStatus());
+          await new Promise(r => setTimeout(r, throttleDelay * 1000));
+        }
+      }
+
+      clientBatchState.status = clientBatchState.cancelled ? 'cancelled' : 'completed';
+      updateBatchBanner(getClientBatchStatus());
+      if (clientBatchState.status === 'completed') {
+        showToast(`✓ Batch complete! Diarized ${clientBatchState.completedCount} memos.`);
+      } else {
+        showToast(`Batch stopped. Completed ${clientBatchState.completedCount} memos.`);
+      }
+      fetchLibrary();
+    }
+
     async function triggerStartBatch() {
       const throttleToggle = document.getElementById('batch-throttle-toggle');
       const throttleDelay = (throttleToggle && throttleToggle.checked) ? (selectedBatchEngine === 'gemini' ? 2 : 10) : 0;
       
       closeBatchModal();
-      showToast(`Launching ${selectedBatchEngine === 'gemini' ? 'Gemini Cloud' : 'Local'} Batch Queue...`);
 
+      const pending = libraryRecordings.filter(r => !r.has_transcript);
+      if (!pending || pending.length === 0) {
+        showToast("All voice memos are already diarized!");
+        return;
+      }
+
+      // If using Gemini Cloud AI or running without local GPU server or in local folder mode:
+      if (selectedBatchEngine === 'gemini' || !localServerOnline || isLocalFolderMode) {
+        await startClientSideBatchQueue(pending, throttleDelay);
+        return;
+      }
+
+      // Fallback to local FastAPI server (WhisperX & Pyannote on Mac GPU/CPU)
+      showToast(`Launching Local Batch Queue (${pending.length} memos)...`);
       try {
         const res = await fetch(`${getApiBaseUrl()}/api/batch/start`, {
           method: 'POST',
@@ -4477,18 +4694,28 @@ Schema:
             path: currentLibraryPath
           })
         });
+
+        const contentType = res.headers.get("content-type") || "";
+        if (!res.ok || !contentType.includes("application/json")) {
+          console.warn("Backend batch returned non-JSON, switching to browser pipeline:", res.status);
+          await startClientSideBatchQueue(pending, throttleDelay);
+          return;
+        }
+
         const data = await res.json();
         if (data.status === 'started') {
           showToast(`Started batch processing for ${data.total_files} voice memos!`);
           startBatchPolling();
+        } else if (data.status === 'delegate_client') {
+          await startClientSideBatchQueue(pending, throttleDelay);
         } else if (data.status === 'empty') {
           showToast("All voice memos are already diarized!");
         } else {
           showToast(data.message || "Could not start batch");
         }
       } catch (err) {
-        console.error("Batch start error:", err);
-        showToast("Error starting batch: " + err.message);
+        console.warn("Batch start error via backend, using browser queue:", err);
+        await startClientSideBatchQueue(pending, throttleDelay);
       }
     }
 
@@ -4499,9 +4726,14 @@ Schema:
     }
 
     async function pollBatchStatus() {
+      if (clientBatchState.status === 'running' || clientBatchState.status === 'paused') {
+        updateBatchBanner(getClientBatchStatus());
+        return;
+      }
       try {
         const res = await fetch(`${getApiBaseUrl()}/api/batch/status`);
-        if (!res.ok) return;
+        const contentType = res.headers.get("content-type") || "";
+        if (!res.ok || !contentType.includes("application/json")) return;
         const data = await res.json();
         updateBatchBanner(data);
       } catch (err) {
@@ -4532,7 +4764,6 @@ Schema:
           if (pauseIcon) pauseIcon.setAttribute('data-lucide', 'pause');
         }
 
-        // If a new memo completed, silently refresh library list so cards turn emerald
         if (data.batch_completed_count > lastBatchCompletedCount) {
           lastBatchCompletedCount = data.batch_completed_count;
           fetchLibrarySilently();
@@ -4541,9 +4772,9 @@ Schema:
         lucide.createIcons();
       } else if (data.status === 'completed') {
         banner.classList.remove('hidden');
-        document.getElementById('batch-banner-title').innerText = "Overnight Batch Completed!";
+        document.getElementById('batch-banner-title').innerText = "Batch Diarization Completed!";
         document.getElementById('batch-banner-badge').innerText = `All ${data.batch_completed_count} Finished`;
-        document.getElementById('batch-banner-detail').innerText = "All voice memos have been diarized and saved to MyCloud.";
+        document.getElementById('batch-banner-detail').innerText = "All voice memos have been diarized and saved with identified speakers.";
         document.getElementById('batch-banner-progress-bar').style.width = "100%";
         document.getElementById('batch-banner-file-eta').innerText = `Finished ${data.batch_completed_count} memos`;
         document.getElementById('batch-banner-total-eta').innerText = `Elapsed: ${formatTime(data.batch_elapsed_total)}`;
@@ -4566,12 +4797,22 @@ Schema:
     }
 
     async function toggleBatchPause() {
+      if (clientBatchState.status === 'running' || clientBatchState.status === 'paused') {
+        clientBatchState.isPaused = !clientBatchState.isPaused;
+        updateBatchBanner(getClientBatchStatus());
+        showToast(clientBatchState.isPaused ? "Batch paused" : "Batch resumed");
+        return;
+      }
+
       try {
         const statusRes = await fetch(`${getApiBaseUrl()}/api/batch/status`);
-        const statusData = await statusRes.json();
-        const endpoint = (statusData.is_paused || statusData.status === 'paused') ? 'resume' : 'pause';
-        await fetch(`${getApiBaseUrl()}/api/batch/${endpoint}`, { method: 'POST' });
-        pollBatchStatus();
+        const contentType = statusRes.headers.get("content-type") || "";
+        if (statusRes.ok && contentType.includes("application/json")) {
+          const statusData = await statusRes.json();
+          const endpoint = (statusData.is_paused || statusData.status === 'paused') ? 'resume' : 'pause';
+          await fetch(`${getApiBaseUrl()}/api/batch/${endpoint}`, { method: 'POST' });
+          pollBatchStatus();
+        }
       } catch (err) {
         showToast("Error updating batch state: " + err.message);
       }
@@ -4579,6 +4820,14 @@ Schema:
 
     async function cancelBatchRun() {
       if (confirm("Are you sure you want to stop the remaining batch queue? Currently running memo will complete.")) {
+        if (clientBatchState.status === 'running' || clientBatchState.status === 'paused') {
+          clientBatchState.cancelled = true;
+          clientBatchState.status = 'cancelled';
+          updateBatchBanner(getClientBatchStatus());
+          showToast("Batch processing stopped.");
+          return;
+        }
+
         try {
           await fetch(`${getApiBaseUrl()}/api/batch/cancel`, { method: 'POST' });
           showToast("Batch processing stopped.");

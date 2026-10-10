@@ -251,6 +251,23 @@ class MemoSplitHandler(BaseHTTPRequestHandler):
             self.handle_get_transcript(full_path)
             return
 
+        # Batch status endpoint
+        if path == "/api/batch/status":
+            self.send_json({
+                "status": "idle",
+                "active": False,
+                "batch_total_count": 0,
+                "batch_current_index": 0,
+                "batch_completed_count": 0,
+                "batch_failed_count": 0,
+                "batch_elapsed_total": 0.0,
+                "batch_eta_total": 0.0,
+                "current_file": "",
+                "current_percent": 0,
+                "current_stage_detail": "Idle"
+            })
+            return
+
         # Serve static files (index.html, js, css, icons)
         self.handle_static_file(path)
 
@@ -258,6 +275,16 @@ class MemoSplitHandler(BaseHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         path = urllib.parse.unquote(parsed.path)
         query = urllib.parse.parse_qs(parsed.query)
+
+        # Batch control endpoints
+        if path.startswith("/api/batch/"):
+            action = path.replace("/api/batch/", "")
+            self.send_json({
+                "status": "delegate_client" if action == "start" else "ok",
+                "action": action,
+                "message": "Batch coordination handled via client-side Gemini pipeline"
+            })
+            return
 
         # Upload audio recording endpoint
         if path in ("/api/upload", "/api/recordings/upload"):
