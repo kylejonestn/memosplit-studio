@@ -251,6 +251,24 @@ class MemoSplitHandler(BaseHTTPRequestHandler):
             self.handle_get_transcript(full_path)
             return
 
+        # /api/profiles
+        if path == "/api/profiles":
+            raw_root = query.get("path", [""])[0].strip()
+            custom_root = raw_root if raw_root else MEDIA_ROOT
+            self.handle_get_profiles(custom_root)
+            return
+
+        # /api/profiles/<filename>/audio
+        profile_audio_match = re.match(r"^/api/profiles/(.+)/audio$", path)
+        if profile_audio_match:
+            rel_file = profile_audio_match.group(1)
+            raw_root = query.get("path", [""])[0].strip()
+            custom_root = raw_root if raw_root else MEDIA_ROOT
+            p_dir = self.get_profiles_dir(custom_root)
+            full_path = os.path.join(p_dir, rel_file)
+            self.handle_stream_audio(full_path)
+            return
+
         # Batch status endpoint
         if path == "/api/batch/status":
             self.send_json({
@@ -275,6 +293,13 @@ class MemoSplitHandler(BaseHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         path = urllib.parse.unquote(parsed.path)
         query = urllib.parse.parse_qs(parsed.query)
+
+        # Voice profiles save endpoint
+        if path in ("/api/profiles", "/api/profiles/save"):
+            raw_root = query.get("path", [""])[0].strip()
+            custom_root = raw_root if raw_root else MEDIA_ROOT
+            self.handle_save_profile(custom_root, query)
+            return
 
         # Batch control endpoints
         if path.startswith("/api/batch/"):
@@ -308,6 +333,21 @@ class MemoSplitHandler(BaseHTTPRequestHandler):
         self.send_error(404, "Not Found")
 
     do_PUT = do_POST
+
+    def do_DELETE(self):
+        parsed = urllib.parse.urlparse(self.path)
+        path = urllib.parse.unquote(parsed.path)
+        query = urllib.parse.parse_qs(parsed.query)
+
+        profile_match = re.match(r"^/api/profiles/(.+)$", path)
+        if profile_match:
+            filename = profile_match.group(1)
+            raw_root = query.get("path", [""])[0].strip()
+            custom_root = raw_root if raw_root else MEDIA_ROOT
+            self.handle_delete_profile(custom_root, filename)
+            return
+
+        self.send_error(404, "Not Found")
 
     def handle_static_file(self, req_path):
         if req_path in ("/", "", "/index.html"):
@@ -352,6 +392,8 @@ class MemoSplitHandler(BaseHTTPRequestHandler):
             rel_folder = os.path.relpath(dirpath, root_dir)
             if rel_folder == ".":
                 rel_folder = ""
+            elif rel_folder.startswith("_profiles") or rel_folder.startswith("."):
+                continue
             elif rel_folder not in folders_map:
                 folders_map[rel_folder] = {"name": os.path.basename(dirpath), "path": rel_folder, "count": 0}
 
@@ -663,6 +705,173 @@ class MemoSplitHandler(BaseHTTPRequestHandler):
             })
         except Exception as e:
             self.send_error(500, f"Failed to upload recording: {e}")
+
+    def get_profiles_dir(self, custom_root: str) -> str:
+        p_dir = os.path.join(custom_root or MEDIA_ROOT, "_profiles")
+        os.makedirs(p_dir, exist_ok=True)
+        return p_dir
+
+    def handle_get_profiles(self, custom_root: str):
+        try:
+            p_dir = self.get_profiles_dir(custom_root)
+            meta_file = os.path.join(p_dir, "profiles.json")
+            profiles = []
+            if os.path.isfile(meta_file):
+                try:
+                    with open(meta_file, "r", encoding="utf-8") as f:
+                        profiles = json.load(f)
+                except Exception:
+                    profiles = []
+
+            audio_exts = {".m4a", ".mp3", ".wav", ".aac", ".ogg", ".flac"}
+            existing_files = {p.get("filename") for p in profiles if p.get("filename")}
+            changed = False
+            for f in os.listdir(p_dir):
+                ext = os.path.splitext(f)[1].lower()
+                if ext in audio_exts and f not in existing_files:
+                    base = os.path.splitext(f)[0]
+                    clean_name = base.replace("_", " ").strip()
+                    file_path = os.path.join(p_dir, f)
+                    profiles.append({
+                        "id": f"prof_{int(time.time())}_{len(profiles)}",
+                        "name": clean_name,
+                        "role": "Speaker",
+                        "filename": f,
+                        "size_bytes": os.path.getsize(file_path),
+                        "created_at": os.path.getmtime(file_path)
+                    })
+                    changed = True
+
+            valid_profiles = []
+            for p in profiles:
+                fn = p.get("filename")
+                if fn and os.path.isfile(os.path.join(p_dir, fn)):
+                    valid_profiles.append(p)
+                else:
+                    changed = True
+
+            if changed:
+                safe_write_file(meta_file, valid_profiles, is_json=True)
+
+            self.send_json({"profiles": valid_profiles, "count": len(valid_profiles)})
+        except Exception as e:
+            self.send_error(500, f"Error getting profiles: {e}")
+
+    def handle_save_profile(self, custom_root: str, query):
+        try:
+            p_dir = self.get_profiles_dir(custom_root)
+            meta_file = os.path.join(p_dir, "profiles.json")
+            content_type = self.headers.get("Content-Type", "")
+            length = int(self.headers.get("Content-Length", 0))
+
+            name = query.get("name", [""])[0].strip()
+            role = query.get("role", [""])[0].strip()
+            filename = query.get("filename", [""])[0].strip()
+
+            file_payload = None
+
+            if "multipart/form-data" in content_type:
+                import email
+                body_bytes = self.rfile.read(length)
+                msg_bytes = b"Content-Type: " + content_type.encode("latin1") + b"\r\n\r\n" + body_bytes
+                msg = email.message_from_bytes(msg_bytes)
+                for part in msg.walk():
+                    fn = part.get_filename()
+                    if fn:
+                        filename = filename or fn
+                        file_payload = part.get_payload(decode=True)
+                    elif part.get_param("name", header="content-disposition") == "name":
+                        name = part.get_payload(decode=True).decode("utf-8", errors="ignore").strip() or name
+                    elif part.get_param("name", header="content-disposition") == "role":
+                        role = part.get_payload(decode=True).decode("utf-8", errors="ignore").strip() or role
+
+            if not name:
+                name = self.headers.get("X-Profile-Name", "").strip() or "Unknown Speaker"
+            if not role:
+                role = self.headers.get("X-Profile-Role", "").strip() or "Speaker"
+
+            if not filename:
+                safe_base = re.sub(r'[^a-zA-Z0-9_\- ]', '', name).replace(' ', '_')
+                filename = f"{safe_base}.wav"
+
+            filename = os.path.basename(filename)
+            final_path = os.path.join(p_dir, filename)
+            tmp_path = f"{final_path}.tmp_{os.getpid()}_{int(time.time() * 1000)}"
+
+            if file_payload is not None:
+                with open(tmp_path, "wb") as f:
+                    f.write(file_payload)
+            else:
+                remaining = length
+                with open(tmp_path, "wb") as f:
+                    while remaining > 0:
+                        chunk_size = min(remaining, 65536)
+                        chunk = self.rfile.read(chunk_size)
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                        remaining -= len(chunk)
+
+            os.replace(tmp_path, final_path)
+
+            profiles = []
+            if os.path.isfile(meta_file):
+                try:
+                    with open(meta_file, "r", encoding="utf-8") as f:
+                        profiles = json.load(f)
+                except Exception:
+                    profiles = []
+
+            existing = next((p for p in profiles if p.get("filename") == filename or p.get("name", "").lower() == name.lower()), None)
+            if existing:
+                existing["name"] = name
+                existing["role"] = role
+                existing["filename"] = filename
+                existing["size_bytes"] = os.path.getsize(final_path)
+                existing["modified_at"] = time.time()
+                profile_obj = existing
+            else:
+                profile_obj = {
+                    "id": f"prof_{int(time.time())}",
+                    "name": name,
+                    "role": role,
+                    "filename": filename,
+                    "size_bytes": os.path.getsize(final_path),
+                    "created_at": time.time()
+                }
+                profiles.append(profile_obj)
+
+            safe_write_file(meta_file, profiles, is_json=True)
+
+            self.send_json({
+                "status": "ok",
+                "profile": profile_obj,
+                "message": f"Successfully enrolled voice profile for {name}"
+            })
+        except Exception as e:
+            self.send_error(500, f"Error saving profile: {e}")
+
+    def handle_delete_profile(self, custom_root: str, filename: str):
+        try:
+            p_dir = self.get_profiles_dir(custom_root)
+            filename = os.path.basename(filename)
+            target = os.path.join(p_dir, filename)
+            if os.path.isfile(target):
+                os.remove(target)
+
+            meta_file = os.path.join(p_dir, "profiles.json")
+            if os.path.isfile(meta_file):
+                try:
+                    with open(meta_file, "r", encoding="utf-8") as f:
+                        profiles = json.load(f)
+                    profiles = [p for p in profiles if p.get("filename") != filename]
+                    safe_write_file(meta_file, profiles, is_json=True)
+                except Exception:
+                    pass
+
+            self.send_json({"status": "deleted", "filename": filename})
+        except Exception as e:
+            self.send_error(500, f"Error deleting profile: {e}")
 
     def send_json(self, data, status=200):
         body = json.dumps(data, ensure_ascii=False).encode("utf-8")

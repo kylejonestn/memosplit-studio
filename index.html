@@ -105,6 +105,13 @@
 
     <!-- Right Header Controls -->
     <div class="flex items-center gap-1.5 sm:gap-2 relative flex-shrink-0">
+      <!-- Voice Profiles Header Button -->
+      <button id="btn-voice-profiles" onclick="openVoiceProfilesModal()" class="h-8 px-2.5 sm:px-3 rounded-lg text-xs font-semibold items-center gap-1.5 transition-all bg-indigo-600/20 text-indigo-300 border border-indigo-500/40 hover:bg-indigo-600/30 shadow-sm flex" title="Manage master voice profiles of coworkers for acoustic AI matching">
+        <i data-lucide="mic" class="w-3.5 h-3.5 text-indigo-400"></i>
+        <span>Profiles</span>
+        <span id="header-profile-count-badge" class="px-1.5 py-0.2 rounded-full text-[10px] font-mono bg-indigo-500/30 text-indigo-200">0</span>
+      </button>
+
       <button id="btn-open-folder" onclick="openLocalFolderPicker()" class="hidden sm:flex h-8 px-3 rounded-lg text-xs font-semibold items-center gap-1.5 transition-all bg-emerald-600/20 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-600/30 shadow-sm" title="Open local voice memo folder directly in your browser">
         <i data-lucide="folder-open" class="w-3.5 h-3.5 text-emerald-400"></i>
         <span>Open Folder</span>
@@ -128,6 +135,15 @@
           </div>
 
           <div class="h-px bg-slate-800/80 my-1"></div>
+
+          <!-- Master Voice Profiles Dropdown Item -->
+          <button onclick="openVoiceProfilesModal(); toggleHeaderMenu();" class="w-full px-3 py-2 text-left flex items-center justify-between text-xs text-indigo-300 hover:bg-slate-800 rounded-xl transition font-medium">
+            <div class="flex items-center gap-2.5">
+              <i data-lucide="mic" class="w-4 h-4 text-indigo-400"></i>
+              <span>Master Voice Profiles</span>
+            </div>
+            <span id="menu-profile-count-badge" class="text-[9px] font-mono px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">0</span>
+          </button>
 
           <!-- Open Local Folder (Browser Direct) -->
           <button onclick="openLocalFolderPicker(); toggleHeaderMenu();" class="w-full px-3 py-2 text-left flex items-center gap-2.5 text-xs text-emerald-300 hover:bg-slate-800 rounded-xl transition font-medium">
@@ -578,6 +594,141 @@
         <button id="btn-start-batch" onclick="triggerStartBatch()" class="px-5 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white rounded-xl text-xs font-semibold transition shadow-lg shadow-purple-600/30 flex items-center gap-2">
           <i data-lucide="play" class="w-3.5 h-3.5 fill-current"></i>
           <span id="btn-start-batch-text">Start Overnight Batch</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Master Voice Profiles Management Modal -->
+  <div id="voice-profiles-modal" class="fixed inset-0 z-50 hidden bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4" onclick="if(event.target === this) closeVoiceProfilesModal()">
+    <div class="bg-slate-900 border border-slate-700/80 rounded-2xl max-w-2xl w-full p-6 shadow-2xl space-y-4 text-left flex flex-col max-h-[90vh]">
+      <!-- Header -->
+      <div class="flex items-center justify-between pb-3 border-b border-slate-800 flex-shrink-0">
+        <div class="flex items-center gap-2.5">
+          <div class="w-8 h-8 rounded-lg bg-indigo-600/20 border border-indigo-500/40 flex items-center justify-center">
+            <i data-lucide="mic" class="w-4 h-4 text-indigo-400"></i>
+          </div>
+          <div>
+            <h3 class="text-sm font-bold text-white flex items-center gap-2">
+              <span>Master Voice Profiles</span>
+              <span id="profile-modal-count-pill" class="text-[10px] font-mono px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">0 Profiles</span>
+            </h3>
+            <p class="text-[11px] text-slate-400">Saved voice samples of yourself & coworkers for acoustic AI matching</p>
+          </div>
+        </div>
+        <button onclick="closeVoiceProfilesModal()" class="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800">
+          <i data-lucide="x" class="w-4 h-4"></i>
+        </button>
+      </div>
+
+      <!-- Informational Hint -->
+      <div class="bg-indigo-950/40 border border-indigo-800/40 rounded-xl p-3 text-xs text-indigo-200/90 flex items-start gap-2.5 flex-shrink-0">
+        <i data-lucide="sparkles" class="w-4 h-4 text-cyan-400 flex-shrink-0 mt-0.5"></i>
+        <div class="space-y-0.5 text-[11px] leading-relaxed">
+          <span class="font-semibold text-indigo-100">How Acoustic Identification Works:</span>
+          <p class="text-slate-300">
+            When you run speaker identification, Gemini analyzes vocal timbre, pitch, resonance, and speech cadence against these reference samples. Speakers are matched by their actual voices even if they never introduce themselves in the meeting!
+          </p>
+        </div>
+      </div>
+
+      <!-- Search & Filter Bar -->
+      <div class="flex items-center justify-between gap-2 flex-shrink-0">
+        <div class="relative flex-1">
+          <i data-lucide="search" class="w-3.5 h-3.5 absolute left-3 top-2.5 text-slate-500"></i>
+          <input type="text" id="voice-profiles-search" oninput="filterVoiceProfilesList(this.value)" placeholder="Search profiles by name or role..." class="w-full bg-slate-950 border border-slate-800 rounded-xl pl-9 pr-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500">
+        </div>
+        <button onclick="loadVoiceProfiles(true)" class="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs flex items-center gap-1.5 border border-slate-700 transition" title="Refresh profiles">
+          <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
+          <span>Refresh</span>
+        </button>
+      </div>
+
+      <!-- Profiles List (Scrollable) -->
+      <div id="voice-profiles-list" class="flex-1 overflow-y-auto space-y-2 pr-1 scrollbar-thin min-h-[220px]">
+        <!-- Populated dynamically -->
+      </div>
+
+      <!-- Footer -->
+      <div class="pt-3 border-t border-slate-800 flex items-center justify-between flex-shrink-0">
+        <span class="text-[11px] text-slate-400">
+          Tip: Click <strong class="text-indigo-300">"Save Voice"</strong> on any speaker card to enroll a new voice sample.
+        </span>
+        <button onclick="closeVoiceProfilesModal()" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-medium transition">
+          Close
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Voice Profile Enrollment Modal -->
+  <div id="enroll-profile-modal" class="fixed inset-0 z-50 hidden bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4" onclick="if(event.target === this) closeEnrollProfileModal()">
+    <div class="bg-slate-900 border border-slate-700/80 rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4 text-left">
+      <!-- Header -->
+      <div class="flex items-center justify-between pb-3 border-b border-slate-800">
+        <div class="flex items-center gap-2.5">
+          <div class="w-8 h-8 rounded-lg bg-indigo-600/20 border border-indigo-500/40 flex items-center justify-center">
+            <i data-lucide="bookmark-plus" class="w-4 h-4 text-indigo-400"></i>
+          </div>
+          <div>
+            <h3 class="text-sm font-bold text-white">Save Voice Profile</h3>
+            <p class="text-[11px] text-slate-400">Slice and store a reference speech sample</p>
+          </div>
+        </div>
+        <button onclick="closeEnrollProfileModal()" class="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800">
+          <i data-lucide="x" class="w-4 h-4"></i>
+        </button>
+      </div>
+
+      <!-- Form Inputs -->
+      <div class="space-y-3 text-xs">
+        <div>
+          <label class="block text-[11px] font-semibold text-slate-300 mb-1">Person's Real Name</label>
+          <input type="text" id="enroll-name-input" placeholder="e.g. Kyle Jones, Suzy Douglas" class="w-full bg-slate-950 border border-slate-700/80 rounded-xl px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 text-xs">
+        </div>
+
+        <div>
+          <label class="block text-[11px] font-semibold text-slate-300 mb-1">Role / Job Title (Optional)</label>
+          <input type="text" id="enroll-role-input" placeholder="e.g. Lead Engineer, Assistant Administrator" class="w-full bg-slate-950 border border-slate-700/80 rounded-xl px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 text-xs">
+        </div>
+
+        <!-- Time Range Selector -->
+        <div class="bg-slate-950 p-3 rounded-xl border border-slate-800 space-y-2">
+          <div class="flex items-center justify-between">
+            <span class="text-[11px] font-semibold text-slate-300">Audio Clip Sample Window</span>
+            <span id="enroll-duration-badge" class="text-[10px] font-mono px-2 py-0.5 rounded bg-indigo-950 text-indigo-300 border border-indigo-800">8.0s duration</span>
+          </div>
+
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="block text-[10px] text-slate-400 mb-0.5">Start (seconds)</label>
+              <input type="number" id="enroll-start-sec" step="0.1" min="0" onchange="handleEnrollTimeChange()" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1 text-white font-mono text-xs focus:outline-none focus:border-indigo-500">
+            </div>
+            <div>
+              <label class="block text-[10px] text-slate-400 mb-0.5">End (seconds)</label>
+              <input type="number" id="enroll-end-sec" step="0.1" min="0" onchange="handleEnrollTimeChange()" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1 text-white font-mono text-xs focus:outline-none focus:border-indigo-500">
+            </div>
+          </div>
+
+          <!-- Audio Preview Player -->
+          <div class="pt-1">
+            <audio id="enroll-preview-audio" controls class="w-full h-8 rounded"></audio>
+          </div>
+        </div>
+
+        <p class="text-[10px] text-slate-400 leading-relaxed">
+          Clean speech of 5–15 seconds without overlapping crosstalk or background music provides the highest acoustic recognition accuracy.
+        </p>
+      </div>
+
+      <!-- Actions -->
+      <div class="pt-2 flex items-center justify-end gap-2 border-t border-slate-800">
+        <button onclick="closeEnrollProfileModal()" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-medium transition">
+          Cancel
+        </button>
+        <button id="btn-save-enroll-profile" onclick="confirmSaveVoiceProfile()" class="px-5 py-2 bg-gradient-to-r from-indigo-600 to-cyan-600 hover:from-indigo-500 hover:to-cyan-500 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-lg shadow-indigo-600/30 transition">
+          <i data-lucide="check" class="w-3.5 h-3.5"></i>
+          <span>Save Voice Profile</span>
         </button>
       </div>
     </div>
@@ -1583,9 +1734,12 @@ if __name__ == "__main__":
                 ${speakerOptions}
               </select>
             </div>
-            <div class="flex items-center gap-2">
+            <div class="flex items-center gap-1.5">
               <span class="text-[11px] font-mono text-slate-400">${formatTime(seg.start)} - ${formatTime(seg.end)}</span>
-              <button onclick="event.stopPropagation(); sliceSingleClip(${seg.id})" title="Copy snippet / slice segment" class="text-slate-400 hover:text-indigo-400 p-1 rounded hover:bg-slate-800">
+              <button onclick="event.stopPropagation(); promptEnrollSegmentVoiceProfile(${seg.id})" title="Save this spoken clip as a master Voice Profile" class="text-slate-400 hover:text-amber-400 p-1 rounded hover:bg-slate-800 transition">
+                <i data-lucide="bookmark-plus" class="w-3 h-3"></i>
+              </button>
+              <button onclick="event.stopPropagation(); sliceSingleClip(${seg.id})" title="Copy snippet / slice segment" class="text-slate-400 hover:text-indigo-400 p-1 rounded hover:bg-slate-800 transition">
                 <i data-lucide="scissors" class="w-3 h-3"></i>
               </button>
             </div>
@@ -1676,10 +1830,16 @@ if __name__ == "__main__":
               <span class="text-[11px] text-slate-400 block truncate mt-0.5">${stats[speakerKey].count} speaking turns • ${durationSec.toFixed(1)}s total</span>
             </div>
           </div>
-          <div class="text-right flex-shrink-0">
-            <span class="text-xs font-mono font-bold text-slate-300">${pct}%</span>
-            <div class="w-16 bg-slate-800 h-1.5 rounded-full overflow-hidden mt-1">
-              <div class="h-full rounded-full" style="width: ${pct}%; background-color: ${meta.color}"></div>
+          <div class="flex items-center gap-2.5 flex-shrink-0">
+            <button onclick="enrollSpeakerAsVoiceProfile('${speakerKey}')" class="px-2 py-1 rounded-lg bg-indigo-950/70 hover:bg-indigo-900 border border-indigo-800/60 hover:border-indigo-600 text-[10px] font-medium text-indigo-300 hover:text-white flex items-center gap-1 transition shadow-sm" title="Save a reference voice sample of ${meta.label} to Master Profiles">
+              <i data-lucide="mic" class="w-3 h-3 text-indigo-400"></i>
+              <span>Save Voice</span>
+            </button>
+            <div class="text-right">
+              <span class="text-xs font-mono font-bold text-slate-300">${pct}%</span>
+              <div class="w-14 bg-slate-800 h-1.5 rounded-full overflow-hidden mt-1">
+                <div class="h-full rounded-full" style="width: ${pct}%; background-color: ${meta.color}"></div>
+              </div>
             </div>
           </div>
         `;
@@ -1932,6 +2092,479 @@ if __name__ == "__main__":
       showToast(`Updated speaker name to "${newName}"`);
     }
 
+    // ==========================================
+    // MASTER VOICE PROFILES & ACOUSTIC MATCHING
+    // ==========================================
+    let enrolledVoiceProfiles = [];
+    let currentDecodedAudioBuffer = null;
+    let currentDecodedAudioSrc = null;
+    let activeEnrollData = { speakerKey: null, startSec: 0, endSec: 8, blob: null };
+
+    function blobToBase64(blob) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          const dataUrl = reader.result;
+          const base64 = typeof dataUrl === 'string' ? dataUrl.split(',')[1] : '';
+          resolve(base64);
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+    }
+
+    async function getOrDecodeCurrentAudioBuffer() {
+      const audioEl = document.getElementById('audio-element');
+      if (!audioEl || !audioEl.src) {
+        throw new Error("No audio currently loaded in studio player.");
+      }
+      if (currentDecodedAudioBuffer && currentDecodedAudioSrc === audioEl.src) {
+        return currentDecodedAudioBuffer;
+      }
+
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      const actx = new AudioCtx();
+      let arrayBuf = null;
+
+      if (currentRecordingHandleObj && currentRecordingHandleObj.audioHandle) {
+        const file = await currentRecordingHandleObj.audioHandle.getFile();
+        arrayBuf = await file.arrayBuffer();
+      } else {
+        const res = await fetch(audioEl.src);
+        if (!res.ok) throw new Error(`Failed to fetch audio stream: ${res.statusText}`);
+        arrayBuf = await res.arrayBuffer();
+      }
+
+      currentDecodedAudioBuffer = await actx.decodeAudioData(arrayBuf);
+      currentDecodedAudioSrc = audioEl.src;
+      return currentDecodedAudioBuffer;
+    }
+
+    function audioBufferToWavBlob(audioBuffer, startSec = 0, endSec = null, targetSampleRate = 16000) {
+      if (!audioBuffer) return null;
+      const srcSampleRate = audioBuffer.sampleRate;
+      const numChannels = audioBuffer.numberOfChannels;
+      const startSrcSample = Math.max(0, Math.floor(startSec * srcSampleRate));
+      const maxEndSec = endSec !== null ? Math.min(endSec, audioBuffer.duration) : audioBuffer.duration;
+      const endSrcSample = Math.min(audioBuffer.length, Math.floor(maxEndSec * srcSampleRate));
+      const numSrcSamples = Math.max(0, endSrcSample - startSrcSample);
+
+      if (numSrcSamples <= 0) return null;
+
+      const durationSec = numSrcSamples / srcSampleRate;
+      const numTargetSamples = Math.floor(durationSec * targetSampleRate);
+      const buffer = new ArrayBuffer(44 + numTargetSamples * 2);
+      const view = new DataView(buffer);
+
+      function writeString(view, offset, string) {
+        for (let i = 0; i < string.length; i++) {
+          view.setUint8(offset + i, string.charCodeAt(i));
+        }
+      }
+
+      // RIFF header
+      writeString(view, 0, 'RIFF');
+      view.setUint32(4, 36 + numTargetSamples * 2, true);
+      writeString(view, 8, 'WAVE');
+      writeString(view, 12, 'fmt ');
+      view.setUint32(16, 16, true);
+      view.setUint16(20, 1, true); // PCM
+      view.setUint16(22, 1, true); // Mono
+      view.setUint32(24, targetSampleRate, true);
+      view.setUint32(28, targetSampleRate * 2, true);
+      view.setUint16(32, 2, true);
+      view.setUint16(34, 16, true);
+      writeString(view, 36, 'data');
+      view.setUint32(40, numTargetSamples * 2, true);
+
+      const ch0 = audioBuffer.getChannelData(0);
+      const ch1 = numChannels > 1 ? audioBuffer.getChannelData(1) : null;
+      const ratio = srcSampleRate / targetSampleRate;
+
+      let offset = 44;
+      for (let i = 0; i < numTargetSamples; i++) {
+        const srcIndex = startSrcSample + i * ratio;
+        const i0 = Math.floor(srcIndex);
+        const i1 = Math.min(ch0.length - 1, i0 + 1);
+        const frac = srcIndex - i0;
+
+        let s0 = ch1 ? (ch0[i0] + ch1[i0]) * 0.5 : ch0[i0];
+        let s1 = ch1 ? (ch0[i1] + ch1[i1]) * 0.5 : ch0[i1];
+        let sample = s0 + frac * (s1 - s0);
+
+        sample = Math.max(-1, Math.min(1, sample));
+        const pcm = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
+        view.setInt16(offset, pcm, true);
+        offset += 2;
+      }
+
+      return new Blob([buffer], { type: 'audio/wav' });
+    }
+
+    async function loadVoiceProfiles(silent = false) {
+      try {
+        if (localServerOnline) {
+          const query = currentLibraryPath ? `?path=${encodeURIComponent(currentLibraryPath)}` : '';
+          const res = await fetch(`${getApiBaseUrl()}/api/profiles${query}`);
+          if (res.ok) {
+            const data = await res.json();
+            enrolledVoiceProfiles = Array.isArray(data.profiles) ? data.profiles : [];
+          }
+        } else if (isLocalFolderMode && rootDirectoryHandle) {
+          try {
+            const profDir = await rootDirectoryHandle.getDirectoryHandle('_profiles', { create: false });
+            const metaHandle = await profDir.getFileHandle('profiles.json', { create: false });
+            const file = await metaHandle.getFile();
+            const json = JSON.parse(await file.text());
+            enrolledVoiceProfiles = Array.isArray(json) ? json : (json.profiles || []);
+          } catch (e) {
+            enrolledVoiceProfiles = [];
+          }
+        }
+
+        updateVoiceProfileBadges();
+        renderVoiceProfilesList();
+      } catch (err) {
+        if (!silent) console.warn("[MemoSplit] Failed to load voice profiles:", err);
+      }
+    }
+
+    function updateVoiceProfileBadges() {
+      const count = enrolledVoiceProfiles.length;
+      const headerBadge = document.getElementById('header-profile-count-badge');
+      if (headerBadge) headerBadge.innerText = count;
+
+      const menuBadge = document.getElementById('menu-profile-count-badge');
+      if (menuBadge) menuBadge.innerText = count;
+
+      const pill = document.getElementById('profile-modal-count-pill');
+      if (pill) pill.innerText = `${count} ${count === 1 ? 'Profile' : 'Profiles'}`;
+    }
+
+    function renderVoiceProfilesList(profiles = enrolledVoiceProfiles) {
+      const container = document.getElementById('voice-profiles-list');
+      if (!container) return;
+
+      if (!profiles || profiles.length === 0) {
+        container.innerHTML = `
+          <div class="h-48 flex flex-col items-center justify-center text-center p-6 bg-slate-950/60 border-2 border-dashed border-slate-800 rounded-xl gap-2.5">
+            <div class="w-10 h-10 rounded-xl bg-indigo-600/10 text-indigo-400 flex items-center justify-center border border-indigo-500/20">
+              <i data-lucide="mic" class="w-5 h-5"></i>
+            </div>
+            <div>
+              <p class="text-xs font-semibold text-white">No Voice Profiles Enrolled Yet</p>
+              <p class="text-[11px] text-slate-400 mt-0.5 max-w-sm">Click <strong class="text-indigo-300">"Save Voice"</strong> on any speaker card or transcript turn in Studio to enroll your first voice sample!</p>
+            </div>
+          </div>
+        `;
+        if (window.lucide) lucide.createIcons();
+        return;
+      }
+
+      const palette = ["#38bdf8", "#a855f7", "#10b981", "#f59e0b", "#ec4899", "#6366f1", "#14b8a6", "#f97316"];
+      const apiBase = getApiBaseUrl();
+      const pathQuery = currentLibraryPath ? `?path=${encodeURIComponent(currentLibraryPath)}` : '';
+
+      container.innerHTML = profiles.map((p, idx) => {
+        const color = palette[idx % palette.length];
+        const audioSrc = localServerOnline 
+          ? `${apiBase}/api/profiles/${encodeURIComponent(p.filename)}/audio${pathQuery}`
+          : (p.blobUrl || '');
+
+        const roleText = (p.role && p.role !== 'Speaker') ? p.role : 'Team Member';
+        const initial = (p.name || 'S').charAt(0).toUpperCase();
+
+        return `
+          <div class="bg-slate-950 p-3 rounded-xl border border-slate-800/80 flex items-center justify-between gap-3 hover:border-slate-700 transition">
+            <div class="flex items-center gap-3 min-w-0 flex-1">
+              <div class="w-9 h-9 rounded-xl flex items-center justify-center text-white font-bold text-xs flex-shrink-0 shadow-sm" style="background-color: ${color}">
+                ${initial}
+              </div>
+              <div class="min-w-0 flex-1">
+                <div class="flex items-center gap-2">
+                  <span class="text-xs font-bold text-white truncate">${p.name}</span>
+                  <span class="text-[10px] text-cyan-400 bg-cyan-950/70 border border-cyan-800/50 px-1.5 py-0.2 rounded font-mono truncate max-w-[130px]">${roleText}</span>
+                </div>
+                <div class="flex items-center gap-2 text-[10px] text-slate-400 mt-0.5 font-mono">
+                  <span>${p.filename}</span>
+                  ${p.size_bytes ? `<span>• ${(p.size_bytes / 1024).toFixed(0)} KB</span>` : ''}
+                </div>
+              </div>
+            </div>
+
+            <div class="flex items-center gap-2 flex-shrink-0">
+              <audio controls src="${audioSrc}" class="h-7 w-36 sm:w-44 rounded-lg bg-slate-900 border border-slate-800"></audio>
+              <button onclick="deleteVoiceProfileClick('${p.filename}')" class="p-1.5 rounded-lg text-slate-400 hover:text-red-400 hover:bg-slate-900 border border-transparent hover:border-red-900/40 transition" title="Delete voice profile">
+                <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+              </button>
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      if (window.lucide) lucide.createIcons();
+    }
+
+    function filterVoiceProfilesList(query) {
+      if (!query || !query.trim()) {
+        renderVoiceProfilesList(enrolledVoiceProfiles);
+        return;
+      }
+      const q = query.toLowerCase().trim();
+      const filtered = enrolledVoiceProfiles.filter(p => 
+        (p.name && p.name.toLowerCase().includes(q)) ||
+        (p.role && p.role.toLowerCase().includes(q)) ||
+        (p.filename && p.filename.toLowerCase().includes(q))
+      );
+      renderVoiceProfilesList(filtered);
+    }
+
+    function openVoiceProfilesModal() {
+      const modal = document.getElementById('voice-profiles-modal');
+      if (modal) modal.classList.remove('hidden');
+      loadVoiceProfiles();
+      if (window.lucide) lucide.createIcons();
+    }
+
+    function closeVoiceProfilesModal() {
+      const modal = document.getElementById('voice-profiles-modal');
+      if (modal) modal.classList.add('hidden');
+    }
+
+    async function enrollSpeakerAsVoiceProfile(speakerKey) {
+      if (!transcriptSegments || transcriptSegments.length === 0) {
+        showToast("No transcript segments loaded. Please load or diarize audio first.");
+        return;
+      }
+
+      // Find turns belonging to this speaker
+      const spkSegs = transcriptSegments.filter(s => s.speaker === speakerKey);
+      if (spkSegs.length === 0) {
+        showToast(`No segments found for ${speakerKey}.`);
+        return;
+      }
+
+      // Pick the cleanest turn between 4 and 15 seconds, or longest turn capped at 12s
+      let chosenSeg = spkSegs.find(s => (s.end - s.start) >= 4.0 && (s.end - s.start) <= 15.0);
+      if (!chosenSeg) {
+        chosenSeg = spkSegs.reduce((prev, curr) => ((curr.end - curr.start) > (prev.end - prev.start) ? curr : prev), spkSegs[0]);
+      }
+
+      const start = chosenSeg.start;
+      const end = Math.min(chosenSeg.end, start + 12.0);
+      const meta = SPEAKER_METADATA[speakerKey] || {};
+      const defaultName = (meta.label && meta.label !== speakerKey) ? meta.label : '';
+      const defaultRole = (meta.role && meta.role !== 'Speaker') ? meta.role : '';
+
+      await openEnrollProfileModal(defaultName, defaultRole, start, end, speakerKey);
+    }
+
+    async function promptEnrollSegmentVoiceProfile(segId) {
+      const seg = transcriptSegments.find(s => s.id === segId);
+      if (!seg) return;
+
+      const meta = SPEAKER_METADATA[seg.speaker] || {};
+      const defaultName = (meta.label && meta.label !== seg.speaker) ? meta.label : '';
+      const defaultRole = (meta.role && meta.role !== 'Speaker') ? meta.role : '';
+      const start = seg.start;
+      const end = Math.min(seg.end, start + 12.0);
+
+      await openEnrollProfileModal(defaultName, defaultRole, start, end, seg.speaker);
+    }
+
+    async function openEnrollProfileModal(name, role, startSec, endSec, speakerKey) {
+      activeEnrollData.speakerKey = speakerKey;
+      activeEnrollData.startSec = Math.max(0, startSec);
+      activeEnrollData.endSec = Math.max(activeEnrollData.startSec + 2.0, endSec);
+
+      document.getElementById('enroll-name-input').value = name || '';
+      document.getElementById('enroll-role-input').value = role || '';
+      document.getElementById('enroll-start-sec').value = activeEnrollData.startSec.toFixed(1);
+      document.getElementById('enroll-end-sec').value = activeEnrollData.endSec.toFixed(1);
+      document.getElementById('enroll-duration-badge').innerText = `${(activeEnrollData.endSec - activeEnrollData.startSec).toFixed(1)}s duration`;
+
+      const modal = document.getElementById('enroll-profile-modal');
+      if (modal) modal.classList.remove('hidden');
+      if (window.lucide) lucide.createIcons();
+
+      // Slice audio snippet preview
+      await updateEnrollAudioPreview();
+    }
+
+    function closeEnrollProfileModal() {
+      const modal = document.getElementById('enroll-profile-modal');
+      if (modal) modal.classList.add('hidden');
+      const audio = document.getElementById('enroll-preview-audio');
+      if (audio) {
+        audio.pause();
+        audio.src = '';
+      }
+    }
+
+    async function handleEnrollTimeChange() {
+      const sInput = parseFloat(document.getElementById('enroll-start-sec').value) || 0;
+      const eInput = parseFloat(document.getElementById('enroll-end-sec').value) || (sInput + 5.0);
+      activeEnrollData.startSec = Math.max(0, sInput);
+      activeEnrollData.endSec = Math.max(activeEnrollData.startSec + 1.0, eInput);
+
+      document.getElementById('enroll-start-sec').value = activeEnrollData.startSec.toFixed(1);
+      document.getElementById('enroll-end-sec').value = activeEnrollData.endSec.toFixed(1);
+      document.getElementById('enroll-duration-badge').innerText = `${(activeEnrollData.endSec - activeEnrollData.startSec).toFixed(1)}s duration`;
+
+      await updateEnrollAudioPreview();
+    }
+
+    async function updateEnrollAudioPreview() {
+      try {
+        const audioBuffer = await getOrDecodeCurrentAudioBuffer();
+        const blob = audioBufferToWavBlob(audioBuffer, activeEnrollData.startSec, activeEnrollData.endSec, 16000);
+        activeEnrollData.blob = blob;
+        const previewAudio = document.getElementById('enroll-preview-audio');
+        if (previewAudio && blob) {
+          previewAudio.src = URL.createObjectURL(blob);
+        }
+      } catch (e) {
+        console.warn("[MemoSplit] Failed to generate enroll audio preview:", e);
+      }
+    }
+
+    async function confirmSaveVoiceProfile() {
+      const name = document.getElementById('enroll-name-input').value.trim();
+      const role = document.getElementById('enroll-role-input').value.trim() || 'Speaker';
+
+      if (!name) {
+        showToast("Please enter the person's name.");
+        return;
+      }
+
+      const saveBtn = document.getElementById('btn-save-enroll-profile');
+      const origHtml = saveBtn ? saveBtn.innerHTML : '';
+      if (saveBtn) {
+        saveBtn.disabled = true;
+        saveBtn.innerHTML = `<i data-lucide="loader-2" class="w-3.5 h-3.5 animate-spin"></i> Saving...`;
+        if (window.lucide) lucide.createIcons();
+      }
+
+      try {
+        if (!activeEnrollData.blob) {
+          const audioBuffer = await getOrDecodeCurrentAudioBuffer();
+          activeEnrollData.blob = audioBufferToWavBlob(audioBuffer, activeEnrollData.startSec, activeEnrollData.endSec, 16000);
+        }
+
+        if (!activeEnrollData.blob) {
+          throw new Error("Could not extract audio samples for this profile.");
+        }
+
+        const safeFilename = `${name.replace(/[^a-zA-Z0-9_\- ]/g, '').replace(/ /g, '_')}.wav`;
+
+        if (localServerOnline) {
+          const formData = new FormData();
+          formData.append('name', name);
+          formData.append('role', role);
+          formData.append('filename', safeFilename);
+          formData.append('file', activeEnrollData.blob, safeFilename);
+
+          const query = currentLibraryPath ? `?path=${encodeURIComponent(currentLibraryPath)}` : '';
+          const res = await fetch(`${getApiBaseUrl()}/api/profiles/save${query}`, {
+            method: 'POST',
+            body: formData
+          });
+
+          if (!res.ok) {
+            const errText = await res.text();
+            throw new Error(`Server returned HTTP ${res.status}: ${errText.substring(0, 80)}`);
+          }
+        } else if (isLocalFolderMode && rootDirectoryHandle) {
+          // Direct file system access handle
+          const profDir = await rootDirectoryHandle.getDirectoryHandle('_profiles', { create: true });
+          const audioHandle = await profDir.getFileHandle(safeFilename, { create: true });
+          const writable = await audioHandle.createWritable();
+          await writable.write(activeEnrollData.blob);
+          await writable.close();
+
+          // Read/write profiles.json
+          let existingProfiles = [];
+          try {
+            const metaHandle = await profDir.getFileHandle('profiles.json', { create: true });
+            const file = await metaHandle.getFile();
+            const text = await file.text();
+            if (text.trim()) existingProfiles = JSON.parse(text);
+          } catch (e) {
+            existingProfiles = [];
+          }
+
+          existingProfiles = existingProfiles.filter(p => p.filename !== safeFilename && p.name.toLowerCase() !== name.toLowerCase());
+          existingProfiles.push({
+            id: `prof_${Date.now()}`,
+            name: name,
+            role: role,
+            filename: safeFilename,
+            size_bytes: activeEnrollData.blob.size,
+            created_at: Date.now() / 1000
+          });
+
+          const metaHandle = await profDir.getFileHandle('profiles.json', { create: true });
+          const metaWritable = await metaHandle.createWritable();
+          await metaWritable.write(JSON.stringify(existingProfiles, null, 2));
+          await metaWritable.close();
+        }
+
+        // If enrolled from a speaker key, update its label in this session too
+        if (activeEnrollData.speakerKey) {
+          updateSpeakerName(activeEnrollData.speakerKey, name);
+          if (role && role !== 'Speaker') {
+            SPEAKER_METADATA[activeEnrollData.speakerKey].role = role;
+          }
+        }
+
+        closeEnrollProfileModal();
+        await loadVoiceProfiles(true);
+        showToast(`⭐ Enrolled Master Voice Profile for "${name}"!`);
+      } catch (err) {
+        console.error("Save profile error:", err);
+        showToast(`Error saving profile: ${err.message}`);
+      } finally {
+        if (saveBtn) {
+          saveBtn.disabled = false;
+          saveBtn.innerHTML = origHtml;
+          if (window.lucide) lucide.createIcons();
+        }
+      }
+    }
+
+    async function deleteVoiceProfileClick(filename) {
+      if (!confirm(`Are you sure you want to delete the voice profile "${filename}"?`)) return;
+
+      try {
+        if (localServerOnline) {
+          const query = currentLibraryPath ? `?path=${encodeURIComponent(currentLibraryPath)}` : '';
+          const res = await fetch(`${getApiBaseUrl()}/api/profiles/${encodeURIComponent(filename)}${query}`, {
+            method: 'DELETE'
+          });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        } else if (isLocalFolderMode && rootDirectoryHandle) {
+          const profDir = await rootDirectoryHandle.getDirectoryHandle('_profiles', { create: false });
+          await profDir.removeEntry(filename);
+
+          const metaHandle = await profDir.getFileHandle('profiles.json', { create: false });
+          const file = await metaHandle.getFile();
+          let list = JSON.parse(await file.text());
+          list = list.filter(p => p.filename !== filename);
+          const metaWritable = await metaHandle.createWritable();
+          await metaWritable.write(JSON.stringify(list, null, 2));
+          await metaWritable.close();
+        }
+
+        await loadVoiceProfiles(true);
+        showToast(`Deleted voice profile "${filename}"`);
+      } catch (e) {
+        showToast(`Error deleting profile: ${e.message}`);
+      }
+    }
+
+    // ==========================================
+    // AUTO-DEDUCE NAMES WITH MULTIMODAL PROFILES
+    // ==========================================
     async function autoDeduceSpeakerNamesWithGemini(isSilent = false) {
       if (!transcriptSegments || transcriptSegments.length === 0) {
         if (!isSilent) showToast("No transcript segments loaded to analyze.");
@@ -1951,9 +2584,12 @@ if __name__ == "__main__":
       const originalBtnHtml = btn ? btn.innerHTML : '';
       if (btn && !isSilent) {
         btn.disabled = true;
-        btn.innerHTML = `<i data-lucide="loader-2" class="w-3.5 h-3.5 animate-spin"></i> Deducing...`;
+        btn.innerHTML = `<i data-lucide="loader-2" class="w-3.5 h-3.5 animate-spin"></i> Matching Voices...`;
         if (window.lucide) lucide.createIcons();
       }
+
+      // 1. Refresh enrolled profiles
+      await loadVoiceProfiles(true);
 
       const models = [
         getGeminiModel(),
@@ -1974,7 +2610,7 @@ if __name__ == "__main__":
         return false;
       }
 
-      // Sample first 150 turns (or whole transcript if <= 150) for speaker introductions
+      // Sample first 150 turns for conversational context
       const sampleSegments = transcriptSegments.slice(0, 150);
       const sampleText = sampleSegments.map(s => {
         const time = formatTime(s.start);
@@ -1983,7 +2619,87 @@ if __name__ == "__main__":
         return `[${time}] ${s.speaker} ${currLabel}: ${s.text}`;
       }).join('\n');
 
-      const deducePrompt = `You are an expert audio transcript analyzer. Analyze the meeting transcript excerpt below to identify and deduce the real human names and roles of the speakers based on self-introductions (e.g. "I'm Adam", "My name is Suzy Douglas, Assistant Administrator"), greetings, when other speakers address them by name (e.g. "Thanks Alex", "Matthew, do you want to start?", "Kyle, any thoughts?"), and organizational roles mentioned.
+      let audioParts = [];
+      let hasAcousticSamples = false;
+
+      // 2. Prepare Multimodal Voice Profile matching if audio & profiles exist
+      if (enrolledVoiceProfiles && enrolledVoiceProfiles.length > 0) {
+        try {
+          const audioBuffer = await getOrDecodeCurrentAudioBuffer();
+          if (audioBuffer) {
+            // A. Pack Reference Audio for each enrolled profile (up to 8 profiles)
+            const apiBase = getApiBaseUrl();
+            const pathQuery = currentLibraryPath ? `?path=${encodeURIComponent(currentLibraryPath)}` : '';
+
+            for (const prof of enrolledVoiceProfiles.slice(0, 8)) {
+              try {
+                let profBlob = null;
+                if (localServerOnline) {
+                  const pRes = await fetch(`${apiBase}/api/profiles/${encodeURIComponent(prof.filename)}/audio${pathQuery}`);
+                  if (pRes.ok) profBlob = await pRes.blob();
+                } else if (isLocalFolderMode && rootDirectoryHandle) {
+                  const profDir = await rootDirectoryHandle.getDirectoryHandle('_profiles', { create: false });
+                  const fHandle = await profDir.getFileHandle(prof.filename);
+                  profBlob = await fHandle.getFile();
+                }
+
+                if (profBlob) {
+                  const b64 = await blobToBase64(profBlob);
+                  if (b64) {
+                    audioParts.push({ text: `REFERENCE VOICE SAMPLE: "${prof.name}" (Role: ${prof.role || 'Team Member'})` });
+                    audioParts.push({ inlineData: { mimeType: 'audio/wav', data: b64 } });
+                  }
+                }
+              } catch (pe) {
+                console.warn(`Could not load audio for profile ${prof.name}:`, pe);
+              }
+            }
+
+            // B. Pack audio slice for each speaker key in this recording (5–8s sample)
+            for (const spkKey of speakerKeys) {
+              const spkSegs = transcriptSegments.filter(s => s.speaker === spkKey);
+              if (spkSegs.length > 0) {
+                let turn = spkSegs.find(s => (s.end - s.start) >= 3.5) || spkSegs[0];
+                const wavBlob = audioBufferToWavBlob(audioBuffer, turn.start, Math.min(turn.end, turn.start + 8.0), 16000);
+                if (wavBlob) {
+                  const b64 = await blobToBase64(wavBlob);
+                  if (b64) {
+                    audioParts.push({ text: `SPEAKER SAMPLE FROM THIS MEETING FOR [${spkKey}]:` });
+                    audioParts.push({ inlineData: { mimeType: 'audio/wav', data: b64 } });
+                    hasAcousticSamples = true;
+                  }
+                }
+              }
+            }
+          }
+        } catch (audErr) {
+          console.warn("[MemoSplit] Could not prepare acoustic audio samples, falling back to transcript introduction deduction:", audErr);
+        }
+      }
+
+      // 3. Assemble Prompt
+      let deducePrompt = '';
+      if (hasAcousticSamples) {
+        deducePrompt = `You are an expert acoustic voice biometric and speaker identification system.
+You are given:
+1. Reference voice audio clips of known team members.
+2. Voice clips extracted from the current meeting for each speaker key (${speakerKeys.join(', ')}).
+3. Transcript excerpts from the meeting.
+
+YOUR TASK:
+1. Compare acoustic vocal timbre, pitch, tone, resonance, accent, and speech cadence between the unknown speaker clips and the reference voice profiles. If an unknown speaker's voice matches a reference profile, assign their EXACT name and role with "match_type": "acoustic_profile".
+2. For any speakers that do not match an enrolled voice profile, examine the transcript excerpt for self-introductions, greetings (e.g. "Thanks Kyle", "Good morning Suzy"), and organizational roles, setting "match_type": "transcript_introduction".
+3. Return ONLY a valid JSON object mapping each speaker key to their deduced name, role, and match_type. Do not include markdown code fences or conversational text.
+
+Transcript Excerpt:
+${sampleText}
+
+Output Schema Example:
+{
+  "${speakerKeys[0] || 'SPEAKER_00'}": { "name": "Kyle Jones", "role": "Lead Engineer", "match_type": "acoustic_profile" }
+}`;
+      } else {
+        deducePrompt = `You are an expert audio transcript analyzer. Analyze the meeting transcript excerpt below to identify and deduce the real human names and roles of the speakers based on self-introductions, greetings, when other speakers address them by name, and organizational roles mentioned.
 
 Transcript Excerpt:
 ${sampleText}
@@ -1992,17 +2708,20 @@ Speaker Keys to Identify:
 ${speakerKeys.join(', ')}
 
 INSTRUCTIONS:
-1. For each speaker key (e.g. SPEAKER_00, SPEAKER_01...), deduce their most likely real name (Full Name or First Name) and optional job title or organization role.
-2. If a speaker's name cannot be identified with certainty, supply a descriptive role or friendly title (e.g. "Speaker 1" or "Guest").
-3. Return ONLY a valid JSON object mapping each speaker key to their deduced name and role. Do not include markdown code fence formatting or explanations.
+1. For each speaker key (e.g. SPEAKER_00, SPEAKER_01...), deduce their most likely real name and optional job title or role.
+2. Return ONLY a valid JSON object mapping each speaker key to their deduced name and role. Do not include markdown code fences or explanations.
 
 Schema:
 {
   "${speakerKeys[0] || 'SPEAKER_00'}": { "name": "Adam", "role": "CapTech Lead" }
 }`;
+      }
+
+      const requestParts = [...audioParts, { text: deducePrompt }];
 
       let deductionSuccess = false;
       let namedCount = 0;
+      let acousticMatches = 0;
 
       for (const model of models) {
         try {
@@ -2010,7 +2729,7 @@ Schema:
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              contents: [{ parts: [{ text: deducePrompt }] }],
+              contents: [{ parts: requestParts }],
               generationConfig: {
                 temperature: 0.1,
                 responseMimeType: "application/json"
@@ -2031,11 +2750,13 @@ Schema:
             for (const [spkKey, val] of Object.entries(parsed)) {
               let name = '';
               let role = 'Speaker';
+              let matchType = '';
               if (typeof val === 'string') {
                 name = val.trim();
               } else if (val && typeof val === 'object') {
                 name = (val.name || val.label || val.speaker_name || '').trim();
                 role = (val.role || val.title || 'Speaker').trim();
+                matchType = val.match_type || '';
               }
 
               if (name && name !== spkKey) {
@@ -2047,6 +2768,7 @@ Schema:
                   if (role && role !== 'Speaker') SPEAKER_METADATA[spkKey].role = role;
                 }
                 namedCount++;
+                if (matchType === 'acoustic_profile') acousticMatches++;
               }
             }
 
@@ -2054,7 +2776,7 @@ Schema:
             break;
           }
         } catch (e) {
-          console.warn(`[MemoSplit] Speaker name deduction with ${model} failed:`, e);
+          console.warn(`[MemoSplit] Speaker identification with ${model} failed:`, e);
         }
       }
 
@@ -2070,10 +2792,15 @@ Schema:
         renderDiarizationStrip();
         if (typeof renderPlayerTranscriptStream === 'function') renderPlayerTranscriptStream();
         await saveTranscriptEdits();
-        if (!isSilent) showToast(`✨ Identified & named ${namedCount} speakers from introductions!`);
+        
+        let msg = `✨ Identified & named ${namedCount} speakers!`;
+        if (acousticMatches > 0) {
+          msg = `✨ Matched ${acousticMatches} by master voice profiles (${namedCount} total identified)!`;
+        }
+        if (!isSilent) showToast(msg);
         return true;
       } else if (!isSilent) {
-        showToast("AI analyzed the transcript but could not find explicit introductions.");
+        showToast("AI analyzed the recording but could not match voice profiles or introductions.");
       }
       return false;
     }
@@ -2464,6 +3191,7 @@ Schema:
           if (indicator) indicator.className = "w-2.5 h-2.5 rounded-full bg-emerald-400";
           if (statusText) statusText.innerText = `Engine Live (${data.platform || data.device || 'Online'})`;
           fetchLibrary();
+          loadVoiceProfiles(true);
           return;
         }
       } catch (err) {}
@@ -2479,6 +3207,7 @@ Schema:
             if (indicator) indicator.className = "w-2.5 h-2.5 rounded-full bg-emerald-400";
             if (statusText) statusText.innerText = `Engine Live :8080`;
             fetchLibrary();
+            loadVoiceProfiles(true);
             return;
           }
         } catch (e) {}
@@ -5821,6 +6550,9 @@ Schema:
 
       // Auto-check local server silently
       testBackendConnection();
+
+      // Load master voice profiles silently
+      loadVoiceProfiles(true);
 
       // Initialize drag and drop on library recordings container
       initLibraryContainerDropZone();
