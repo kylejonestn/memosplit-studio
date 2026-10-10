@@ -117,7 +117,7 @@
         <span>Open Folder</span>
       </button>
 
-      <input type="file" id="audio-upload" accept="audio/*,.m4a,.mp3,.wav,.ogg,.aac" class="hidden" onchange="handleAudioUpload(event)">
+      <input type="file" id="audio-upload" accept="audio/*,.m4a,.qta,.mp3,.wav,.ogg,.aac,.flac" class="hidden" onchange="handleAudioUpload(event)">
       
       <!-- Settings & Utilities Menu Dropdown -->
       <div class="relative">
@@ -151,10 +151,10 @@
             <span>Open Local Folder (Browser)</span>
           </button>
 
-          <!-- Load .m4a file -->
+          <!-- Load .qta / .m4a file -->
           <button onclick="document.getElementById('audio-upload').click(); toggleHeaderMenu();" class="w-full px-3 py-2 text-left flex items-center gap-2.5 text-xs text-slate-200 hover:bg-slate-800 rounded-xl transition font-medium">
             <i data-lucide="upload" class="w-4 h-4 text-indigo-400"></i>
-            <span>Load Audio (.m4a)</span>
+            <span>Load Audio (.qta / .m4a)</span>
           </button>
 
           <!-- Engine & Setup Tab -->
@@ -257,8 +257,8 @@
         <i id="drop-overlay-icon" data-lucide="file-audio" class="w-10 h-10 text-white"></i>
       </div>
       <div class="space-y-1">
-        <h3 id="drop-overlay-title" class="text-xl font-bold text-white tracking-tight">Drop .m4a to Ingest & Diarize</h3>
-        <p id="drop-overlay-subtext" class="text-xs text-slate-300">Voice memos will be loaded and processed through the local pipeline</p>
+        <h3 id="drop-overlay-title" class="text-xl font-bold text-white tracking-tight">Drop Voice Memo (.qta, .m4a) to Ingest</h3>
+        <p id="drop-overlay-subtext" class="text-xs text-slate-300">Apple Voice Memos & audio files will be loaded and processed through the AI pipeline</p>
       </div>
       <div id="drop-overlay-target" class="flex items-center gap-2 text-[11px] font-mono text-indigo-300 bg-indigo-950/60 px-3 py-1.5 rounded-xl border border-indigo-800/60">
         <i data-lucide="sparkles" class="w-3.5 h-3.5 text-cyan-400"></i>
@@ -902,11 +902,11 @@
             </div>
 
             <!-- Upload Audio to Active Folder Button -->
-            <button id="btn-upload-to-folder" onclick="triggerAudioUploadToFolder()" class="h-8 px-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl border border-indigo-500/50 flex items-center gap-1.5 transition text-[11px] font-medium shadow-sm" title="Upload audio file (.m4a, .mp3) directly into the active folder">
+            <button id="btn-upload-to-folder" onclick="triggerAudioUploadToFolder()" class="h-8 px-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl border border-indigo-500/50 flex items-center gap-1.5 transition text-[11px] font-medium shadow-sm" title="Upload audio file (.qta, .m4a, .mp3) directly into the active folder">
               <i data-lucide="upload-cloud" class="w-3.5 h-3.5"></i>
               <span class="hidden sm:inline">Upload Audio</span>
             </button>
-            <input type="file" id="upload-audio-input" accept="audio/*,.m4a,.mp3,.wav,.aac,.flac,.ogg" multiple class="hidden" onchange="handleAudioUploadSelected(event)">
+            <input type="file" id="upload-audio-input" accept="audio/*,.m4a,.qta,.mp3,.wav,.aac,.flac,.ogg" multiple class="hidden" onchange="handleAudioUploadSelected(event)">
 
             <!-- Overnight Batch Button -->
             <button id="btn-batch-modal" onclick="openBatchModal()" class="h-8 px-2.5 bg-gradient-to-r from-purple-600/20 to-indigo-600/20 hover:from-purple-600/30 hover:to-indigo-600/30 text-purple-200 hover:text-white rounded-xl border border-purple-500/35 hover:border-purple-400/60 flex items-center gap-1.5 transition text-[11px] font-medium shadow-sm" title="Batch diarize untranscribed memos through the night">
@@ -2813,12 +2813,20 @@ Schema:
     async function ingestAudioFile(file) {
       if (!file) return;
 
-      const isM4A = file.name.toLowerCase().endsWith('.m4a');
-      const isAudio = file.type.startsWith('audio/') || isM4A;
+      const lowerName = (file.name || '').toLowerCase();
+      const isM4A = lowerName.endsWith('.m4a');
+      const isQTA = lowerName.endsWith('.qta');
+      const isKnownAudioExt = isM4A || isQTA || lowerName.endsWith('.mp3') || lowerName.endsWith('.wav') || lowerName.endsWith('.aac') || lowerName.endsWith('.flac') || lowerName.endsWith('.ogg');
+      const isAudio = (file.type && file.type.startsWith('audio/')) || isKnownAudioExt;
 
-      if (!isAudio && !isM4A) {
-        showToast(`Please drop an audio file (.m4a, .mp3, .wav)`);
+      if (!isAudio) {
+        showToast(`Please drop an audio file (.qta, .m4a, .mp3, .wav)`);
         return;
+      }
+
+      // If Apple Voice Memos .qta or .m4a was dropped with missing or generic MIME type, normalize it to audio/mp4 for HTML5 audio decoding
+      if ((isQTA || isM4A) && (!file.type || file.type === 'application/octet-stream')) {
+        file = new File([file], file.name, { type: 'audio/mp4' });
       }
 
       // Switch to studio tab automatically if on backend tab
@@ -2832,7 +2840,7 @@ Schema:
       const subtextEl = document.getElementById('ingest-subtext');
 
       fileNameEl.innerText = file.name;
-      statusEl.innerText = "Ingesting & extracting audio...";
+      statusEl.innerText = isQTA ? "Ingesting Apple Voice Memo (.qta)..." : "Ingesting & extracting audio...";
       percentEl.innerText = "15%";
       barEl.style.width = "15%";
       subtextEl.innerText = "Reading audio data and waveform characteristics...";
@@ -2843,7 +2851,7 @@ Schema:
       audioEl.src = url;
 
       document.getElementById('track-name').innerText = file.name;
-      document.getElementById('badge-source').innerText = isM4A ? "M4A Voice Memo" : "Local Audio";
+      document.getElementById('badge-source').innerText = isQTA ? "Apple Voice Memo (.qta)" : (isM4A ? "M4A Voice Memo" : "Local Audio");
 
       // Check if local FastAPI engine is online for real inference
       if (localServerOnline) {
@@ -3359,17 +3367,20 @@ Schema:
       if (!files || files.length === 0) return;
 
       const audioFiles = [];
-      const validExts = ['.m4a', '.mp3', '.wav', '.aac', '.flac', '.ogg'];
+      const validExts = ['.m4a', '.qta', '.mp3', '.wav', '.aac', '.flac', '.ogg'];
       for (let i = 0; i < files.length; i++) {
-        const f = files[i];
+        let f = files[i];
         const lower = (f.name || '').toLowerCase();
         if (validExts.some(ext => lower.endsWith(ext))) {
+          if ((lower.endsWith('.qta') || lower.endsWith('.m4a')) && (!f.type || f.type === 'application/octet-stream')) {
+            f = new File([f], f.name, { type: 'audio/mp4' });
+          }
           audioFiles.push(f);
         }
       }
 
       if (audioFiles.length === 0) {
-        showToast("Please drop or select an audio file (.m4a, .mp3, .wav)");
+        showToast("Please drop or select an audio file (.qta, .m4a, .mp3, .wav)");
         return;
       }
 
@@ -4033,7 +4044,7 @@ Schema:
     }
 
     async function scanLocalDirectory(dirHandle) {
-      const audioExts = ['.m4a', '.mp3', '.wav', '.aac', '.ogg', '.flac'];
+      const audioExts = ['.m4a', '.qta', '.mp3', '.wav', '.aac', '.ogg', '.flac'];
       const recordingsMap = new Map();
       const folderSet = new Map();
 
@@ -4240,7 +4251,11 @@ Schema:
       if (recObj && recObj.audioHandle) {
         try {
           const audioFile = await recObj.audioHandle.getFile();
-          audioEl.src = URL.createObjectURL(audioFile);
+          const lower = (audioFile.name || '').toLowerCase();
+          const normFile = ((lower.endsWith('.qta') || lower.endsWith('.m4a')) && (!audioFile.type || audioFile.type === 'application/octet-stream'))
+            ? new File([audioFile], audioFile.name, { type: 'audio/mp4' })
+            : audioFile;
+          audioEl.src = URL.createObjectURL(normFile);
         } catch (e) {
           console.error("Error reading audio file handle:", e);
         }
@@ -4911,7 +4926,7 @@ Schema:
       let parts = [];
       const lowerName = (audioFile.name || "").toLowerCase();
       let mime = audioFile.type || "audio/mp4";
-      if (lowerName.endsWith('.m4a')) mime = "audio/mp4";
+      if (lowerName.endsWith('.m4a') || lowerName.endsWith('.qta')) mime = "audio/mp4";
       else if (lowerName.endsWith('.mp3')) mime = "audio/mp3";
       else if (lowerName.endsWith('.wav')) mime = "audio/wav";
       else if (lowerName.endsWith('.aac')) mime = "audio/aac";
@@ -5959,13 +5974,13 @@ Schema:
         if (currentTab === 'library') {
           const folderDisplay = currentActiveFolder ? `/${currentActiveFolder}` : 'Library Root';
           if (titleEl) titleEl.innerText = "Upload Audio to Active Folder";
-          if (subtextEl) subtextEl.innerText = "Drop audio (.m4a, .mp3, .wav) to save directly into:";
+          if (subtextEl) subtextEl.innerText = "Drop Apple Voice Memos (.qta, .m4a) or audio files to save into:";
           if (targetEl) {
             targetEl.innerHTML = `<i data-lucide="folder-check" class="w-3.5 h-3.5 text-emerald-400"></i> <span class="font-bold text-white">${folderDisplay}</span>`;
           }
         } else {
           if (titleEl) titleEl.innerText = "Drop Audio to Ingest & Diarize";
-          if (subtextEl) subtextEl.innerText = "Voice memos will be loaded into Studio for diarization";
+          if (subtextEl) subtextEl.innerText = "Apple Voice Memos (.qta, .m4a) will be loaded into Studio for diarization";
           if (targetEl) {
             targetEl.innerHTML = `<i data-lucide="sparkles" class="w-3.5 h-3.5 text-cyan-400"></i> <span>Studio Playground Mode</span>`;
           }
@@ -6025,26 +6040,37 @@ Schema:
       dragCounter = 0;
       hideDropZone();
 
-      const files = (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) 
-        ? e.dataTransfer.files 
-        : null;
+      // Extract files from items (Apple Voice Memos native drag support) or files
+      let droppedFiles = [];
+      if (e.dataTransfer && e.dataTransfer.items && e.dataTransfer.items.length > 0) {
+        for (let i = 0; i < e.dataTransfer.items.length; i++) {
+          const item = e.dataTransfer.items[i];
+          if (item.kind === 'file') {
+            const f = item.getAsFile();
+            if (f) droppedFiles.push(f);
+          }
+        }
+      }
+      if (droppedFiles.length === 0 && e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+        droppedFiles = Array.from(e.dataTransfer.files);
+      }
 
-      if (!files || files.length === 0) return;
+      if (!droppedFiles || droppedFiles.length === 0) return;
 
       if (currentTab === 'library') {
         // Upload audio file(s) directly to currently active folder
-        await uploadAudioFilesToFolder(files, currentActiveFolder);
+        await uploadAudioFilesToFolder(droppedFiles, currentActiveFolder);
       } else {
         let targetFile = null;
-        for (let i = 0; i < files.length; i++) {
-          const name = (files[i].name || '').toLowerCase();
-          if (name.endsWith('.m4a') || name.endsWith('.mp3') || name.endsWith('.wav')) {
-            targetFile = files[i];
+        for (let i = 0; i < droppedFiles.length; i++) {
+          const name = (droppedFiles[i].name || '').toLowerCase();
+          if (name.endsWith('.qta') || name.endsWith('.m4a') || name.endsWith('.mp3') || name.endsWith('.wav') || name.endsWith('.aac') || name.endsWith('.flac') || name.endsWith('.ogg')) {
+            targetFile = droppedFiles[i];
             break;
           }
         }
         if (!targetFile) {
-          targetFile = files[0];
+          targetFile = droppedFiles[0];
         }
         ingestAudioFile(targetFile);
       }
@@ -6074,11 +6100,22 @@ Schema:
         hideDropZone();
         container.classList.remove('ring-2', 'ring-indigo-500', 'bg-indigo-950/20');
 
-        const files = (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0)
-          ? e.dataTransfer.files
-          : null;
-        if (files && files.length > 0) {
-          await uploadAudioFilesToFolder(files, currentActiveFolder);
+        let droppedFiles = [];
+        if (e.dataTransfer && e.dataTransfer.items && e.dataTransfer.items.length > 0) {
+          for (let i = 0; i < e.dataTransfer.items.length; i++) {
+            const item = e.dataTransfer.items[i];
+            if (item.kind === 'file') {
+              const f = item.getAsFile();
+              if (f) droppedFiles.push(f);
+            }
+          }
+        }
+        if (droppedFiles.length === 0 && e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+          droppedFiles = Array.from(e.dataTransfer.files);
+        }
+
+        if (droppedFiles.length > 0) {
+          await uploadAudioFilesToFolder(droppedFiles, currentActiveFolder);
         }
       });
     }

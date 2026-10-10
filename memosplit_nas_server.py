@@ -28,6 +28,12 @@ from socketserver import ThreadingMixIn
 PORT = int(os.getenv("PORT", "8088"))
 HOST = os.getenv("HOST", "0.0.0.0")
 
+# Register Apple Voice Memos QuickTime Audio (.qta) and MPEG-4 Audio (.m4a)
+mimetypes.add_type("audio/mp4", ".qta")
+mimetypes.add_type("audio/mp4", ".m4a")
+
+AUDIO_EXTENSIONS = {".m4a", ".qta", ".mp3", ".wav", ".aac", ".ogg", ".flac"}
+
 # Candidate root paths for voice memos on My Cloud NAS
 DEFAULT_SEARCH_PATHS = [
     "/shares/Public/Kyle/voice clips",
@@ -384,7 +390,7 @@ class MemoSplitHandler(BaseHTTPRequestHandler):
             self.send_json({"recordings": [], "folders": [], "total": 0, "path": root_dir})
             return
 
-        audio_exts = {".m4a", ".mp3", ".wav", ".aac", ".ogg", ".flac"}
+        audio_exts = AUDIO_EXTENSIONS
         recordings_map = {}
         folders_map = {"": {"name": os.path.basename(root_dir) or "Root", "path": "", "count": 0}}
 
@@ -723,7 +729,7 @@ class MemoSplitHandler(BaseHTTPRequestHandler):
                 except Exception:
                     profiles = []
 
-            audio_exts = {".m4a", ".mp3", ".wav", ".aac", ".ogg", ".flac"}
+            audio_exts = AUDIO_EXTENSIONS
             existing_files = {p.get("filename") for p in profiles if p.get("filename")}
             changed = False
             for f in os.listdir(p_dir):
