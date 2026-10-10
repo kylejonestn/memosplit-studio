@@ -13,6 +13,7 @@ Zero-dependency, standalone HTTP server running directly on Linux / My Cloud OS.
 import os
 import sys
 import re
+import time
 import json
 import mimetypes
 import urllib.request
@@ -257,6 +258,15 @@ class MemoSplitHandler(BaseHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         path = urllib.parse.unquote(parsed.path)
         query = urllib.parse.parse_qs(parsed.query)
+
+        # Upload audio recording endpoint
+        if path in ("/api/upload", "/api/recordings/upload"):
+            folder = query.get("folder", [""])[0].strip()
+            filename = query.get("filename", [""])[0].strip()
+            raw_root = query.get("path", [""])[0].strip()
+            custom_root = raw_root if raw_root else MEDIA_ROOT
+            self.handle_upload_recording(custom_root, folder, filename)
+            return
 
         # Save transcript endpoint
         transcript_match = re.match(r"^/api/recordings/(.+)/transcript$", path)
@@ -554,6 +564,78 @@ class MemoSplitHandler(BaseHTTPRequestHandler):
             self.send_json({"status": "saved", **saved_map})
         except Exception as e:
             self.send_error(500, f"Failed to save transcript: {e}")
+
+    def handle_upload_recording(self, custom_root: str, folder: str, filename: str):
+        try:
+            content_type = self.headers.get("Content-Type", "")
+            length = int(self.headers.get("Content-Length", 0))
+
+            file_payload = None
+
+            if "multipart/form-data" in content_type:
+                import email
+                # Use standard email parser to extract multipart file and form fields
+                body_bytes = self.rfile.read(length)
+                msg_bytes = b"Content-Type: " + content_type.encode("latin1") + b"\r\n\r\n" + body_bytes
+                msg = email.message_from_bytes(msg_bytes)
+                for part in msg.walk():
+                    fn = part.get_filename()
+                    if fn:
+                        filename = filename or fn
+                        file_payload = part.get_payload(decode=True)
+                    elif part.get_param("name", header="content-disposition") == "folder":
+                        folder = folder or part.get_payload(decode=True).decode("utf-8", errors="ignore").strip()
+
+            if not filename:
+                filename = self.headers.get("X-Filename", "").strip()
+
+            if not filename:
+                filename = f"Recording_{int(time.time())}.m4a"
+
+            filename = os.path.basename(filename)
+            clean_folder = folder.strip("/\\")
+
+            dest_dir = os.path.join(custom_root, clean_folder) if clean_folder else custom_root
+            abs_custom = os.path.abspath(custom_root)
+            abs_dest = os.path.abspath(dest_dir)
+
+            if not abs_dest.startswith(abs_custom):
+                self.send_error(403, "Forbidden destination folder")
+                return
+
+            os.makedirs(abs_dest, exist_ok=True)
+            final_path = os.path.join(abs_dest, filename)
+            tmp_path = f"{final_path}.tmp_{os.getpid()}_{int(time.time() * 1000)}"
+
+            if file_payload is not None:
+                with open(tmp_path, "wb") as f:
+                    f.write(file_payload)
+            else:
+                remaining = length
+                with open(tmp_path, "wb") as f:
+                    while remaining > 0:
+                        chunk_size = min(remaining, 65536)
+                        chunk = self.rfile.read(chunk_size)
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                        remaining -= len(chunk)
+
+            os.replace(tmp_path, final_path)
+
+            rel_path = os.path.join(clean_folder, filename) if clean_folder else filename
+            file_size = os.path.getsize(final_path)
+
+            self.send_json({
+                "status": "ok",
+                "filename": filename,
+                "folder": clean_folder,
+                "relative_path": rel_path,
+                "saved_path": final_path,
+                "size_bytes": file_size
+            })
+        except Exception as e:
+            self.send_error(500, f"Failed to upload recording: {e}")
 
     def send_json(self, data, status=200):
         body = json.dumps(data, ensure_ascii=False).encode("utf-8")

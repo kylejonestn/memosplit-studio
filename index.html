@@ -237,14 +237,14 @@
   <!-- Full-Window Drag and Drop Ingest Overlay -->
   <div id="drop-overlay" class="fixed inset-0 z-50 pointer-events-none bg-slate-950/85 backdrop-blur-md flex flex-col items-center justify-center transition-opacity duration-200 opacity-0">
     <div class="max-w-md w-full mx-4 p-8 rounded-3xl bg-slate-900 border-2 border-dashed border-indigo-500/80 shadow-2xl shadow-indigo-500/20 text-center flex flex-col items-center gap-4 animate-pulse pointer-events-none">
-      <div class="w-20 h-20 rounded-2xl bg-gradient-to-tr from-indigo-600 to-cyan-400 flex items-center justify-center shadow-lg shadow-indigo-500/30">
-        <i data-lucide="file-audio" class="w-10 h-10 text-white"></i>
+      <div id="drop-overlay-icon-box" class="w-20 h-20 rounded-2xl bg-gradient-to-tr from-indigo-600 to-cyan-400 flex items-center justify-center shadow-lg shadow-indigo-500/30">
+        <i id="drop-overlay-icon" data-lucide="file-audio" class="w-10 h-10 text-white"></i>
       </div>
       <div class="space-y-1">
-        <h3 class="text-xl font-bold text-white tracking-tight">Drop .m4a to Ingest & Diarize</h3>
-        <p class="text-xs text-slate-300">Voice memos will be loaded and processed through the local pipeline</p>
+        <h3 id="drop-overlay-title" class="text-xl font-bold text-white tracking-tight">Drop .m4a to Ingest & Diarize</h3>
+        <p id="drop-overlay-subtext" class="text-xs text-slate-300">Voice memos will be loaded and processed through the local pipeline</p>
       </div>
-      <div class="flex items-center gap-2 text-[11px] font-mono text-indigo-300 bg-indigo-950/60 px-3 py-1.5 rounded-xl border border-indigo-800/60">
+      <div id="drop-overlay-target" class="flex items-center gap-2 text-[11px] font-mono text-indigo-300 bg-indigo-950/60 px-3 py-1.5 rounded-xl border border-indigo-800/60">
         <i data-lucide="sparkles" class="w-3.5 h-3.5 text-cyan-400"></i>
         <span>Auto-ingest • Sub-second Speaker Alignment</span>
       </div>
@@ -749,6 +749,13 @@
                 </div>
               </div>
             </div>
+
+            <!-- Upload Audio to Active Folder Button -->
+            <button id="btn-upload-to-folder" onclick="triggerAudioUploadToFolder()" class="h-8 px-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl border border-indigo-500/50 flex items-center gap-1.5 transition text-[11px] font-medium shadow-sm" title="Upload audio file (.m4a, .mp3) directly into the active folder">
+              <i data-lucide="upload-cloud" class="w-3.5 h-3.5"></i>
+              <span class="hidden sm:inline">Upload Audio</span>
+            </button>
+            <input type="file" id="upload-audio-input" accept="audio/*,.m4a,.mp3,.wav,.aac,.flac,.ogg" multiple class="hidden" onchange="handleAudioUploadSelected(event)">
 
             <!-- Overnight Batch Button -->
             <button id="btn-batch-modal" onclick="openBatchModal()" class="h-8 px-2.5 bg-gradient-to-r from-purple-600/20 to-indigo-600/20 hover:from-purple-600/30 hover:to-indigo-600/30 text-purple-200 hover:text-white rounded-xl border border-purple-500/35 hover:border-purple-400/60 flex items-center gap-1.5 transition text-[11px] font-medium shadow-sm" title="Batch diarize untranscribed memos through the night">
@@ -2594,6 +2601,104 @@ Schema:
       openLocalFolderPicker();
     }
 
+    function triggerAudioUploadToFolder() {
+      const input = document.getElementById('upload-audio-input');
+      if (input) {
+        input.value = '';
+        input.click();
+      }
+    }
+
+    async function handleAudioUploadSelected(event) {
+      const files = event.target.files;
+      if (files && files.length > 0) {
+        await uploadAudioFilesToFolder(files, currentActiveFolder);
+      }
+    }
+
+    async function getFolderDirectoryHandle(rootHandle, relativePath) {
+      if (!relativePath) return rootHandle;
+      const parts = relativePath.split('/').filter(Boolean);
+      let currHandle = rootHandle;
+      for (const part of parts) {
+        currHandle = await currHandle.getDirectoryHandle(part, { create: true });
+      }
+      return currHandle;
+    }
+
+    async function uploadAudioFilesToFolder(files, targetFolder = '') {
+      if (!files || files.length === 0) return;
+
+      const audioFiles = [];
+      const validExts = ['.m4a', '.mp3', '.wav', '.aac', '.flac', '.ogg'];
+      for (let i = 0; i < files.length; i++) {
+        const f = files[i];
+        const lower = (f.name || '').toLowerCase();
+        if (validExts.some(ext => lower.endsWith(ext))) {
+          audioFiles.push(f);
+        }
+      }
+
+      if (audioFiles.length === 0) {
+        showToast("Please drop or select an audio file (.m4a, .mp3, .wav)");
+        return;
+      }
+
+      const folderDisplay = targetFolder ? targetFolder.split('/').pop() : 'Root';
+      showToast(`Uploading ${audioFiles.length} file(s) into "${folderDisplay}"...`);
+
+      let successCount = 0;
+
+      for (const file of audioFiles) {
+        try {
+          if (isLocalFolderMode && rootDirectoryHandle) {
+            // Local Folder Mode (File System Access API)
+            const targetDirHandle = await getFolderDirectoryHandle(rootDirectoryHandle, targetFolder);
+            const fileHandle = await targetDirHandle.getFileHandle(file.name, { create: true });
+            const writable = await fileHandle.createWritable();
+            await writable.write(file);
+            await writable.close();
+            successCount++;
+          } else {
+            // Server / NAS Mode (memosplit_nas_server.py)
+            const queryParams = [];
+            if (targetFolder) queryParams.push(`folder=${encodeURIComponent(targetFolder)}`);
+            queryParams.push(`filename=${encodeURIComponent(file.name)}`);
+            if (currentLibraryPath) queryParams.push(`path=${encodeURIComponent(currentLibraryPath)}`);
+
+            const uploadUrl = `${getApiBaseUrl()}/api/upload?${queryParams.join('&')}`;
+            const res = await fetch(uploadUrl, {
+              method: 'POST',
+              headers: {
+                'Content-Type': file.type || 'application/octet-stream',
+                'X-Filename': file.name
+              },
+              body: file
+            });
+
+            if (!res.ok) {
+              const errData = await res.json().catch(() => ({}));
+              throw new Error(errData.message || `HTTP ${res.status}`);
+            }
+            successCount++;
+          }
+        } catch (err) {
+          console.error("Upload error for", file.name, err);
+          showToast(`Upload failed for ${file.name}: ${err.message}`);
+        }
+      }
+
+      if (successCount > 0) {
+        showToast(`✓ Uploaded ${successCount} audio file(s) into "${folderDisplay}"!`);
+        // Refresh library view
+        if (isLocalFolderMode && rootDirectoryHandle) {
+          await scanLocalDirectory(rootDirectoryHandle);
+        } else {
+          await fetchLibrary();
+        }
+      }
+    }
+
     async function fetchLibrary() {
       if (isLocalFolderMode && rootDirectoryHandle) {
         await scanLocalDirectory(rootDirectoryHandle);
@@ -2965,15 +3070,20 @@ Schema:
     }
 
     function renderEmptyStateHtml(message) {
+      const folderLabel = currentActiveFolder ? `/${currentActiveFolder}` : 'Library Root';
       return `
-        <div class="col-span-full py-16 flex flex-col items-center justify-center text-center gap-3 bg-slate-900/50 border border-dashed border-slate-800 rounded-2xl p-8">
-          <div class="w-12 h-12 rounded-xl bg-slate-800 flex items-center justify-center text-slate-400">
-            <i data-lucide="folder-search" class="w-6 h-6"></i>
+        <div class="col-span-full py-16 flex flex-col items-center justify-center text-center gap-3.5 bg-slate-900/50 border-2 border-dashed border-slate-800 hover:border-indigo-500/50 rounded-2xl p-8 transition">
+          <div class="w-14 h-14 rounded-2xl bg-indigo-600/10 text-indigo-400 flex items-center justify-center border border-indigo-500/20 shadow-lg shadow-indigo-500/10">
+            <i data-lucide="upload-cloud" class="w-7 h-7"></i>
           </div>
-          <div>
+          <div class="space-y-1">
             <p class="text-sm font-semibold text-white">${message}</p>
-            <p class="text-xs text-slate-400 mt-1">Add .m4a audio and companion files to your MyCloud folders.</p>
+            <p class="text-xs text-slate-400">Drag & drop audio files (.m4a, .mp3, .wav) right here to save into <span class="text-indigo-400 font-mono font-medium">${folderLabel}</span>.</p>
           </div>
+          <button onclick="triggerAudioUploadToFolder()" class="mt-1 px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold flex items-center gap-2 shadow-lg transition">
+            <i data-lucide="plus" class="w-4 h-4"></i>
+            <span>Upload Audio to ${folderLabel}</span>
+          </button>
         </div>
       `;
     }
@@ -4864,6 +4974,26 @@ Schema:
 
     function showDropZone() {
       if (dropOverlay) {
+        const titleEl = document.getElementById('drop-overlay-title');
+        const subtextEl = document.getElementById('drop-overlay-subtext');
+        const targetEl = document.getElementById('drop-overlay-target');
+
+        if (currentTab === 'library') {
+          const folderDisplay = currentActiveFolder ? `/${currentActiveFolder}` : 'Library Root';
+          if (titleEl) titleEl.innerText = "Upload Audio to Active Folder";
+          if (subtextEl) subtextEl.innerText = "Drop audio (.m4a, .mp3, .wav) to save directly into:";
+          if (targetEl) {
+            targetEl.innerHTML = `<i data-lucide="folder-check" class="w-3.5 h-3.5 text-emerald-400"></i> <span class="font-bold text-white">${folderDisplay}</span>`;
+          }
+        } else {
+          if (titleEl) titleEl.innerText = "Drop Audio to Ingest & Diarize";
+          if (subtextEl) subtextEl.innerText = "Voice memos will be loaded into Studio for diarization";
+          if (targetEl) {
+            targetEl.innerHTML = `<i data-lucide="sparkles" class="w-3.5 h-3.5 text-cyan-400"></i> <span>Studio Playground Mode</span>`;
+          }
+        }
+
+        if (window.lucide) lucide.createIcons();
         dropOverlay.classList.remove('opacity-0');
         dropOverlay.classList.add('opacity-100');
       }
@@ -4912,7 +5042,7 @@ Schema:
       }
     });
 
-    window.addEventListener('drop', (e) => {
+    window.addEventListener('drop', async (e) => {
       e.preventDefault();
       dragCounter = 0;
       hideDropZone();
@@ -4921,7 +5051,12 @@ Schema:
         ? e.dataTransfer.files 
         : null;
 
-      if (files && files.length > 0) {
+      if (!files || files.length === 0) return;
+
+      if (currentTab === 'library') {
+        // Upload audio file(s) directly to currently active folder
+        await uploadAudioFilesToFolder(files, currentActiveFolder);
+      } else {
         let targetFile = null;
         for (let i = 0; i < files.length; i++) {
           const name = (files[i].name || '').toLowerCase();
@@ -4936,6 +5071,39 @@ Schema:
         ingestAudioFile(targetFile);
       }
     });
+
+    function initLibraryContainerDropZone() {
+      const container = document.getElementById('library-recordings-container');
+      if (!container) return;
+
+      container.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+        container.classList.add('ring-2', 'ring-indigo-500', 'bg-indigo-950/20');
+      });
+
+      container.addEventListener('dragleave', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        container.classList.remove('ring-2', 'ring-indigo-500', 'bg-indigo-950/20');
+      });
+
+      container.addEventListener('drop', async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dragCounter = 0;
+        hideDropZone();
+        container.classList.remove('ring-2', 'ring-indigo-500', 'bg-indigo-950/20');
+
+        const files = (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0)
+          ? e.dataTransfer.files
+          : null;
+        if (files && files.length > 0) {
+          await uploadAudioFilesToFolder(files, currentActiveFolder);
+        }
+      });
+    }
 
     // =========================================================================
     // Minimal Playback Mode & Transcript Management
@@ -5404,6 +5572,9 @@ Schema:
 
       // Auto-check local server silently
       testBackendConnection();
+
+      // Initialize drag and drop on library recordings container
+      initLibraryContainerDropZone();
     });
   </script>
 
